@@ -1,1 +1,20 @@
-venv
+# environments
+.venv/
+venv/
+
+# editors
+.idea/
+.vscode/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+.pytest_cache/
+
+# murmur runtime data (store + published files)
+data/
+murmur.toml
