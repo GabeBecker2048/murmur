@@ -12,6 +12,11 @@ services:
     container_name: murmur
     restart: unless-stopped
     user: "1000:1000"
+    # API keys for the optional sources (MURMUR_FINNHUB_API_KEY, MURMUR_POLYGON_API_KEY)
+    # live in ./.env, which is never committed; the collect script strips it to .env.example.
+    env_file:
+      - path: .env
+        required: false
     environment:
       # The schedule fires at config `timezone` (America/New_York) regardless of
       # TZ; TZ only affects log timestamps.
