@@ -4,6 +4,30 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.4.0] - 2026-11-06
+
+Lead/lag analysis. The first version that can say something about the
+central question, once enough days have accumulated.
+
+### Added
+
+- Daily correlations for every window × return type at lags −1, 0 and +1
+  (lag = return session − news session), Pearson and Spearman.
+- Rolling correlations as of each day over the last 1, 3, 6 and 12 months:
+  pooled over every ticker-day observation and per ticker; stored in
+  `rolling_correlations` (schema v4) and exported as
+  `rolling_correlations.parquet`, with a `leadlag.png` chart per day.
+- Each run re-analyses the previous session (which only now has a lag +1
+  return) and re-exports it, so late-arriving headlines reach the published
+  file.
+- `murmur analyze --all` recomputes every day with returns, for after a
+  schema change.
+
+### Changed
+
+- `murmur analyze` lists every lag; the one-line summary shows the matched
+  lag-0 pairs and the row count.
+
 ## [0.3.0] - 2026-11-05
 
 Timing and returns. The dataset now has the shape the lead/lag analysis

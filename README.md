@@ -7,14 +7,15 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.3.0, pre-public.** The pipeline runs daily on the server with a
+**Status: 0.4.0, pre-public.** The pipeline runs daily on the server with a
 market-cap universe of the 100 largest US companies. Headlines are bucketed
 into overnight and intraday news windows on the NYSE calendar, three returns
-are computed from open and close, and the published dataset is Parquet with
-monthly compaction. The lead/lag analysis (0.4.0), more sources, the API and
-the web UI arrive in later versions. The repository stays private until the
-original contributors agree to publish it, and the code is never published to
-PyPI.
+are computed from open and close, and every window is correlated with every
+return at lags −1, 0 and +1, daily and over rolling 1 to 12-month horizons.
+This is the first version that can say something about the central question,
+once enough days have accumulated. More sources, the API and the web UI
+arrive in later versions. The repository stays private until the original
+contributors agree to publish it, and the code is never published to PyPI.
 
 ## How it works
 
@@ -27,7 +28,7 @@ fails:
 | news | recent headlines for every ticker in the universe | Yahoo Finance via yfinance | `articles`, `article_tickers` |
 | prices | daily OHLCV bars for the last month, one request for all tickers | yfinance | `prices` |
 | sentiment | scores every headline not yet scored | FinBERT (`ProsusAI/finbert`), CPU | `sentiment` |
-| analyze | windows for new articles, the three returns, per-window sentiment, Pearson + Spearman across tickers per window | scipy | `returns`, `window_sentiment`, `correlations` |
+| analyze | windows for new articles, the three returns, per-window sentiment, correlations at lags −1/0/+1 across tickers, and the rolling lead/lag results | scipy | `returns`, `window_sentiment`, `correlations`, `rolling_correlations` |
 | export | the day's tables as Parquet (CSV for the small ones), two charts and `index.json` | | `<data_dir>/published/` |
 
 Every write is an upsert, so running a day twice stores an article once and
@@ -81,10 +82,25 @@ in that window. Three returns are computed from the daily bars:
 | intraday | close_t / open_t − 1 |
 | daily | close_t / close_t−1 − 1 |
 
-0.3.0 correlates each window with its matching return at lag 0 (overnight
-with overnight, intraday with intraday, day with daily) across the universe,
-Pearson and Spearman. The lags and rolling windows that answer the lead/lag
-question are 0.4.0.
+### Lead or lag
+
+Every window is correlated with every return at three lags. The lag is the
+return's session minus the news's session:
+
+| lag | pairs | reads as |
+|---|---|---|
+| +1 | today's news, tomorrow's return | news **leads** prices (predicts) |
+| 0 | today's news, today's return | news and prices move together |
+| −1 | today's news, yesterday's return | news **follows** prices (reports) |
+
+Two aggregations, both Pearson and Spearman: *daily* (across the universe on
+one day, written to `correlations`) and *rolling* (as of each day, over every
+ticker-day observation in the last 1, 3, 6 and 12 months, pooled and per
+ticker, written to `rolling_correlations`). The rolling results are the
+answer to the question; the daily ones are its noisy ingredients. Each run
+also re-analyses the previous session, which only then has a tomorrow.
+`leadlag.png` in each day's folder plots the pooled Pearson by lag for the
+three matched pairs with confidence intervals.
 
 ## Install
 
@@ -107,6 +123,7 @@ uv run murmur universe                 # the list in force today (--rebuild to r
 uv run murmur news                     # one stage at a time
 uv run murmur prices
 uv run murmur analyze                  # scores pending headlines, then the day's analysis
+uv run murmur analyze --all            # recompute every day (after a schema change)
 uv run murmur export
 uv run murmur runs                     # recent runs and which stage failed
 uv run murmur schedule                 # the daily job, forever
@@ -167,8 +184,9 @@ index.json                              every file: table, date, path, format, r
 2026/11/05/returns.parquet              overnight, intraday, daily per ticker
 2026/11/05/sentiment.parquet            per-headline scores with ticker and window
 2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns
-2026/11/05/correlations.parquet         the day's correlations (window x return)
-2026/11/05/sentiment.png, correlation.png
+2026/11/05/correlations.parquet         the day's correlations (window x return x lag)
+2026/11/05/rolling_correlations.parquet rolling 1/3/6/12-month results as of the day, pooled and per ticker
+2026/11/05/sentiment.png, correlation.png, leadlag.png
 2026/10/prices.parquet ...              a finished month, compacted into one file per table
 ```
 
