@@ -190,6 +190,26 @@ uv run murmur --version
 The first sentiment run downloads FinBERT (about 440 MB) into the Hugging
 Face cache (`HF_HOME` to relocate it).
 
+## The web UI
+
+`murmur serve` also serves the dashboard at `/`: static HTML and JavaScript
+from the package, Plotly.js vendored, no build step, talking only to
+`/api/v1` and `/data`. Light and dark themes, usable on a phone.
+
+| page | what it shows |
+|---|---|
+| Overview | the question, today's three matched-pair correlations, the lead/lag chart, how the same-session correlation has moved, recent sessions |
+| Lead or lag | horizon, method and source filters; the chart; every window × return × lag with CI, p and n; the history of one cell; one session's per-company scatter |
+| Companies | the covered list for a month; a company's day sentiment, daily return, close, per-company lead/lag and latest headlines with scores |
+| Sources | coverage per source, overlap, same-session correlation by source, headlines per session |
+| Murmur 100 | constituents with rank and weight, top 20 chart, this month's additions and removals, downloads |
+| Downloads | every dataset with its license, tables, columns and files, as Parquet or CSV |
+| Admin | sign in with the API token: jobs (queue, watch progress, tail logs, cancel), backfill form, scheduler (pause, resume, run now, recent runs), every setting as a form, the process log |
+
+The admin token is kept in the tab's session storage only. On the public
+hostname, restrict `/admin` and non-GET requests to trusted networks at the
+reverse proxy; the API enforces the token either way.
+
 ## The API
 
 ```
@@ -210,6 +230,7 @@ GET  /api/v1/sources[/{s}/series]        source coverage and comparison
 GET  /api/v1/charts/leadlag.png          the one chart the API draws
 GET  /data/index.json, /data/<dataset>/YYYY/MM/DD/YYYYMMDD.<table>.parquet[?format=csv]
 GET  /docs                               OpenAPI UI
+GET  /, /leadlag, /tickers/{t}, /sources, /index, /downloads, /admin   the dashboard
 ```
 
 Reads need nothing. `POST`, `PUT` and `DELETE` need

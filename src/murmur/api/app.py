@@ -147,7 +147,8 @@ def create_app(
         description=(
             "News-sentiment vs stock-return pipeline. `/api/v1` answers queries and runs "
             "jobs; `/data` serves the published datasets (Parquet, or CSV with "
-            "`?format=csv`). Mutating routes need `Authorization: Bearer <MURMUR_API_TOKEN>`."
+            "`?format=csv`); `/` is the dashboard. Mutating routes need "
+            "`Authorization: Bearer <MURMUR_API_TOKEN>`."
         ),
         lifespan=lifespan,
     )
@@ -207,4 +208,7 @@ def create_app(
         name="data",
     )
     Path(published).mkdir(parents=True, exist_ok=True)
+    from murmur.api.ui import mount_ui
+
+    mount_ui(app)  # last: its catch-all route must sit behind the API, /data and /docs
     return app
