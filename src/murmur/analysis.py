@@ -166,10 +166,13 @@ def returns_available(store: Store, day: date) -> bool:
 
 def compute_returns(store: Store, day: date) -> dict[str, Return]:
     """Overnight, intraday and daily returns for every ticker with a bar on
-    ``day`` and on the previous session; stored in ``returns``."""
+    ``day`` and on the previous session; stored in ``returns``. A split taking
+    effect on ``day`` divides the previous close by its ratio, so unadjusted
+    sources give the right return across the split."""
     prev_day = previous_session(day)
     today = store.bars_on(day.isoformat())
     prev = store.bars_on(prev_day.isoformat())
+    splits = store.splits_on(day.isoformat())
     out: dict[str, Return] = {}
     for ticker, bar in today.items():
         before = prev.get(ticker)
@@ -177,9 +180,11 @@ def compute_returns(store: Store, day: date) -> dict[str, Return]:
             continue
         if before["close"] <= 0 or bar["open"] <= 0:
             continue
-        out[ticker] = Return(
-            ticker, prev_day.isoformat(), before["close"], bar["open"], bar["close"]
-        )
+        prev_close = before["close"]
+        ratio = splits.get(ticker)
+        if ratio and ratio > 0 and not _already_adjusted(prev_close, bar["open"], ratio):
+            prev_close = prev_close / ratio
+        out[ticker] = Return(ticker, prev_day.isoformat(), prev_close, bar["open"], bar["close"])
     store.upsert_returns(
         (
             r.ticker,
@@ -195,6 +200,15 @@ def compute_returns(store: Store, day: date) -> dict[str, Return]:
         for r in out.values()
     )
     return out
+
+
+def _already_adjusted(prev_close: float, open_: float, ratio: float) -> bool:
+    """True when the stored previous close already reflects the split (a source that
+    restates history, like Yahoo): the raw gap then looks like a normal day while
+    dividing again would fabricate a ratio-sized jump."""
+    raw_gap = abs(open_ / prev_close - 1)
+    adjusted_gap = abs(open_ / (prev_close / ratio) - 1)
+    return raw_gap < adjusted_gap
 
 
 def stored_returns(store: Store, day: date) -> dict[str, dict[str, float]]:

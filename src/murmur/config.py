@@ -22,17 +22,25 @@ ENV_CONFIG = "MURMUR_CONFIG"
 ENV_DATA_DIR = "MURMUR_DATA_DIR"
 ENV_FINNHUB_KEY = "MURMUR_FINNHUB_API_KEY"
 ENV_POLYGON_KEY = "MURMUR_POLYGON_API_KEY"
+ENV_DATABENTO_KEY = "MURMUR_DATABENTO_API_KEY"
 ENV_API_TOKEN = "MURMUR_API_TOKEN"
 ENV_CORS = "MURMUR_CORS_ORIGINS"
 DEFAULT_USER_CONFIG = Path("murmur.toml")
 SETTINGS_FILENAME = "settings.toml"
 
 NEWS_SOURCES = ("yahoo", "finnhub", "gdelt")
-PRICE_SOURCES = ("yfinance", "polygon")
+PRICE_SOURCES = ("yfinance", "polygon", "databento")
+SPLIT_SOURCES = ("auto", "polygon", "none")
 UNIVERSE_SOURCES = ("static", "marketcap")
 DEVICES = ("cpu", "cuda", "auto")
+THEMES = ("auto", "light", "dark")
+METHODS = ("pearson", "spearman")
+RUN_KINDS = ("full", "collect", "analyze")
+"""What a scheduled run does: everything; news collection only (the evening slot when
+``schedule.analysis_time`` is set); prices + analysis for a past session (the morning slot)."""
+TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 
-SECRET_KEYS = ("finnhub.api_key", "polygon.api_key")
+SECRET_KEYS = ("finnhub.api_key", "polygon.api_key", "databento.api_key")
 """Masked when shown, refused when edited through the API."""
 LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", *SECRET_KEYS)
 """Keys the settings API refuses: they need a restart, or are secrets."""
@@ -55,12 +63,16 @@ class NewsConfig:
 @dataclass(frozen=True)
 class PricesConfig:
     source: str
+    splits: str
+    """Where split ratios come from: ``polygon``, ``none``, or ``auto`` (polygon when a key
+    is configured). Unadjusted sources (databento, polygon) need them for correct returns."""
 
 
 @dataclass(frozen=True)
 class KeysConfig:
     finnhub: str
     polygon: str
+    databento: str
 
 
 @dataclass(frozen=True)
@@ -99,13 +111,49 @@ class IndexConfig:
 @dataclass(frozen=True)
 class ScheduleConfig:
     time: str
+    """The daily slot: the whole day, or only news collection when ``analysis_time`` is set."""
+    analysis_time: str
+    """Optional second slot (HH:MM): prices + analysis + export for the previous session.
+    For price sources whose bar for a day is final only in the evening (Databento)."""
+    paused: bool
     retries: int
     retry_delay_minutes: int
 
     @property
     def hour_minute(self) -> tuple[int, int]:
-        hour, minute = self.time.split(":")
-        return int(hour), int(minute)
+        return _hm(self.time)
+
+    @property
+    def split(self) -> bool:
+        return bool(self.analysis_time)
+
+    @property
+    def slots(self) -> list[tuple[str, str]]:
+        """``(HH:MM, kind)`` for each daily slot."""
+        if not self.analysis_time:
+            return [(self.time, "full")]
+        return [(self.time, "collect"), (self.analysis_time, "analyze")]
+
+
+def _hm(text: str) -> tuple[int, int]:
+    hour, minute = text.split(":")
+    return int(hour), int(minute)
+
+
+@dataclass(frozen=True)
+class UiConfig:
+    title: str
+    tagline: str
+    default_months: int
+    default_method: str
+    theme: str
+
+
+@dataclass(frozen=True)
+class DatasetsConfig:
+    private: tuple[str, ...]
+    """Datasets whose files `/data` refuses without the API token (e.g. ``prices`` until the
+    source's terms allow publishing). They stay in the manifest, flagged ``public: false``."""
 
 
 @dataclass(frozen=True)
@@ -130,6 +178,8 @@ class Config:
     index: IndexConfig
     schedule: ScheduleConfig
     api: ApiConfig
+    ui: UiConfig
+    datasets: DatasetsConfig
     source_path: Path | None
     """The ops file that was merged over the defaults, if any."""
     raw: dict = field(default_factory=dict, compare=False, repr=False)
@@ -233,6 +283,7 @@ def load_config(
     for env_key, table, key in (
         (ENV_FINNHUB_KEY, "finnhub", "api_key"),
         (ENV_POLYGON_KEY, "polygon", "api_key"),
+        (ENV_DATABENTO_KEY, "databento", "api_key"),
         (ENV_API_TOKEN, "api", "token"),
         (ENV_CORS, "api", "cors_origins"),
     ):
@@ -265,8 +316,27 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
         if price_source not in PRICE_SOURCES:
             raise ConfigError(f"prices.source must be one of {PRICE_SOURCES}, not {price_source!r}")
         schedule_time = str(raw["schedule"]["time"])
-        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", schedule_time):
+        if not re.fullmatch(TIME_PATTERN, schedule_time):
             raise ConfigError(f"schedule.time must be HH:MM, not {schedule_time!r}")
+        analysis_time = str(raw["schedule"].get("analysis_time", "") or "")
+        if analysis_time and not re.fullmatch(TIME_PATTERN, analysis_time):
+            raise ConfigError(
+                f"schedule.analysis_time must be HH:MM or empty, not {analysis_time!r}"
+            )
+        splits = str(raw.get("prices", {}).get("splits", "auto"))
+        if splits not in SPLIT_SOURCES:
+            raise ConfigError(f"prices.splits must be one of {SPLIT_SOURCES}, not {splits!r}")
+        ui = raw.get("ui", {})
+        if str(ui.get("theme", "auto")) not in THEMES:
+            raise ConfigError(f"ui.theme must be one of {THEMES}")
+        if str(ui.get("default_method", "pearson")) not in METHODS:
+            raise ConfigError(f"ui.default_method must be one of {METHODS}")
+        if int(ui.get("default_months", 3)) not in (1, 3, 6, 12):
+            raise ConfigError("ui.default_months must be 1, 3, 6 or 12")
+        private = raw.get("datasets", {}).get("private", [])
+        if isinstance(private, str):
+            private = [private]
+        private = tuple(str(x) for x in private)
         api = raw.get("api", {})
         cors = api.get("cors_origins", ())
         if isinstance(cors, str):
@@ -297,10 +367,11 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
             data_dir=Path(raw["data_dir"]),
             timezone=str(raw["timezone"]),
             news=NewsConfig(max_articles=int(raw["news"]["max_articles"]), sources=sources),
-            prices=PricesConfig(source=price_source),
+            prices=PricesConfig(source=price_source, splits=splits),
             keys=KeysConfig(
                 finnhub=str(raw.get("finnhub", {}).get("api_key", "")),
                 polygon=str(raw.get("polygon", {}).get("api_key", "")),
+                databento=str(raw.get("databento", {}).get("api_key", "")),
             ),
             sentiment=SentimentConfig(
                 model=str(raw["sentiment"]["model"]),
@@ -317,6 +388,8 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
             index=IndexConfig(name=index_name, size=index_size),
             schedule=ScheduleConfig(
                 time=schedule_time,
+                analysis_time=analysis_time,
+                paused=bool(raw["schedule"].get("paused", False)),
                 retries=int(raw["schedule"]["retries"]),
                 retry_delay_minutes=int(raw["schedule"]["retry_delay_minutes"]),
             ),
@@ -326,6 +399,14 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 token=str(api.get("token", "")),
                 cors_origins=tuple(cors),
             ),
+            ui=UiConfig(
+                title=str(ui.get("title", "Murmur")),
+                tagline=str(ui.get("tagline", "")),
+                default_months=int(ui.get("default_months", 3)),
+                default_method=str(ui.get("default_method", "pearson")),
+                theme=str(ui.get("theme", "auto")),
+            ),
+            datasets=DatasetsConfig(private=private),
             source_path=user_path,
             raw=raw,
             provenance=provenance,
@@ -360,7 +441,19 @@ SETTINGS_SCHEMA: list[dict] = [
         "path": "prices.source",
         "type": "choice",
         "choices": list(PRICE_SOURCES),
-        "help": "Daily price source. Polygon's free plan cannot serve today's bar.",
+        "help": (
+            "Daily price source. databento (official consolidated end-of-day, final at 20:15 ET)"
+            " and polygon cannot serve today's bar at 18:00: set schedule.analysis_time."
+        ),
+    },
+    {
+        "path": "prices.splits",
+        "type": "choice",
+        "choices": list(SPLIT_SOURCES),
+        "help": (
+            "Split ratios for return computation (polygon needs its key; auto = polygon when"
+            " the key is set). Unadjusted sources need them."
+        ),
     },
     {
         "path": "sentiment.model",
@@ -429,6 +522,20 @@ SETTINGS_SCHEMA: list[dict] = [
         "help": "Daily run time, HH:MM in the configured timezone.",
     },
     {
+        "path": "schedule.analysis_time",
+        "type": "string",
+        "pattern": TIME_PATTERN,
+        "help": (
+            "Optional morning slot (HH:MM) running prices + analysis + export for the previous"
+            " session; schedule.time then only collects news. Empty = one full run."
+        ),
+    },
+    {
+        "path": "schedule.paused",
+        "type": "boolean",
+        "help": "When true the scheduler queues nothing; jobs started by hand still run.",
+    },
+    {
         "path": "schedule.retries",
         "type": "integer",
         "min": 0,
@@ -439,6 +546,43 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "integer",
         "min": 1,
         "help": "Minutes between attempts.",
+    },
+    {
+        "path": "ui.title",
+        "type": "string",
+        "help": "Dashboard title.",
+    },
+    {
+        "path": "ui.tagline",
+        "type": "string",
+        "help": "One line under the title.",
+    },
+    {
+        "path": "ui.default_months",
+        "type": "choice",
+        "choices": [1, 3, 6, 12],
+        "help": "Rolling horizon the dashboard opens with.",
+    },
+    {
+        "path": "ui.default_method",
+        "type": "choice",
+        "choices": list(METHODS),
+        "help": "Correlation method the dashboard opens with.",
+    },
+    {
+        "path": "ui.theme",
+        "type": "choice",
+        "choices": list(THEMES),
+        "help": "Default theme; visitors can switch.",
+    },
+    {
+        "path": "datasets.private",
+        "type": "list",
+        "choices": ["companies", "prices", "news", "sentiment", "correlations"],
+        "help": (
+            "Datasets served only with the API token (kept in the manifest, flagged"
+            " public=false). prices stays here until the source's terms allow publishing."
+        ),
     },
     {
         "path": "data_dir",
@@ -479,6 +623,12 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "secret",
         "editable": False,
         "help": "Env MURMUR_POLYGON_API_KEY.",
+    },
+    {
+        "path": "databento.api_key",
+        "type": "secret",
+        "editable": False,
+        "help": "Env MURMUR_DATABENTO_API_KEY.",
     },
 ]
 

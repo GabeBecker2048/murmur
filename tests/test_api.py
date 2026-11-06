@@ -85,6 +85,9 @@ def test_openapi_lists_the_surface(client):
         "/api/v1/index/{name}/history/{key}",
         "/api/v1/companies",
         "/api/v1/companies/{key}",
+        "/api/v1/scheduler/pause",
+        "/api/v1/scheduler/resume",
+        "/api/v1/ui",
         "/api/v1/days",
         "/api/v1/days/{date}",
         "/api/v1/days/{date}/articles",
@@ -368,13 +371,71 @@ def test_datasets_and_csv(client, provider):
     assert client.get("/api/v1/datasets/prices?table=nope").json()["total"] == 0
     assert client.get("/api/v1/datasets/nope").status_code == 404
 
-    url = "/data/prices/2026/11/05/20261105.prices.parquet"
+    url = "/data/sentiment/2026/11/05/20261105.sentiment.parquet"
     parquet = client.get(url)
     assert parquet.status_code == 200 and parquet.headers["cache-control"] == "public, max-age=300"
     csv = client.get(url + "?format=csv")
     assert csv.status_code == 200 and csv.headers["content-type"].startswith("text/csv")
-    assert csv.headers["content-disposition"] == 'attachment; filename="20261105.prices.csv"'
+    assert csv.headers["content-disposition"] == 'attachment; filename="20261105.sentiment.csv"'
     lines = csv.text.strip().splitlines()
-    assert lines[0].startswith('"cik","ticker","date"') and len(lines) == 3
-    assert client.get("/data/prices/2026/11/05/missing.parquet?format=csv").status_code == 404
-    assert client.get("/data/index.json").json()["datasets"]["m100"]["cadence"] == "monthly"
+    assert lines[0].startswith('"date","cik","ticker"') and len(lines) == 5
+    assert client.get("/data/sentiment/2026/11/05/missing.parquet?format=csv").status_code == 404
+    manifest = client.get("/data/index.json").json()
+    assert manifest["datasets"]["m100"]["cadence"] == "monthly"
+
+    # prices is private by default until its source's terms allow publishing
+    assert manifest["datasets"]["prices"]["public"] is False
+    assert manifest["datasets"]["sentiment"]["public"] is True
+    private = "/data/prices/2026/11/05/20261105.prices.parquet"
+    refused = client.get(private)
+    assert refused.status_code == 403 and "not published" in refused.json()["detail"]
+    assert client.get(private + "?format=csv").status_code == 403
+    assert client.get(private, headers=AUTH).status_code == 200
+    assert client.get(private, headers={"Authorization": "Bearer wrong"}).status_code == 403
+    assert prices["public"] is False
+
+
+def test_scheduler_pause_resume_and_ui(client, provider):
+    assert client.post("/api/v1/scheduler/pause").status_code == 401
+    r = client.post("/api/v1/scheduler/pause", headers=AUTH)
+    assert r.status_code == 200 and r.json()["paused"] is True
+    assert provider.get().schedule.paused is True
+    assert client.get("/api/v1/status").json()["config"]["schedule"]["paused"] is True
+    r = client.post("/api/v1/scheduler/resume", headers=AUTH)
+    assert r.json() == {"paused": False, "slots": [["18:00", "full"]]}
+    client.put(
+        "/api/v1/settings", json={"schedule": {"analysis_time": "06:30"}}, headers=AUTH
+    ).raise_for_status()
+    st = client.get("/api/v1/status").json()["config"]["schedule"]
+    assert st["slots"] == [["18:00", "collect"], ["06:30", "analyze"]]
+
+    ui = client.get("/api/v1/ui").json()
+    assert ui["title"] == "Murmur" and ui["default_months"] == 3 and ui["theme"] == "auto"
+    assert ui["index"] == {"name": "m100", "title": "Murmur 100", "size": 100}
+    assert ui["private_datasets"] == ["prices"] and ui["writes_enabled"] is True
+    types = client.get("/api/v1/jobs/types").json()
+    assert "backfill" in types["types"] and types["backfill_stages"][0] == "news"
+    assert types["params"]["run"] == ["date", "kind"]
+
+    # the backfill job validates like the others: regenerate needs confirm
+    r = client.post(
+        "/api/v1/jobs",
+        json={
+            "type": "backfill",
+            "params": {"from": "2026-11-01", "to": "2026-11-05", "regenerate": True},
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 400 and "confirm" in r.json()["detail"]
+    r = client.post(
+        "/api/v1/jobs",
+        json={"type": "backfill", "params": {"from": "2026-11-05", "stages": "prices,analyze"}},
+        headers=AUTH,
+    )
+    assert r.status_code == 202
+    job = client.get(f"/api/v1/jobs/{r.json()['id']}").json()
+    assert job["params"] == {
+        "from": "2026-11-05",
+        "to": "2026-11-05",
+        "stages": ["prices", "analyze"],
+    }

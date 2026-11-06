@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from murmur.clock import utc_now_iso
-from murmur.config import Config, ConfigProvider
+from murmur.config import RUN_KINDS, Config, ConfigProvider
 from murmur.store import Store
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ TRIGGER_SCHEDULE = "schedule"
 DESTRUCTIVE = {"delete_analysis", "delete_scores", "delete_universe_month"}
 JOB_TYPES = (
     "run",
+    "backfill",
     "universe",
     "news",
     "prices",
@@ -44,6 +45,7 @@ JOB_TYPES = (
     "backup",
     *sorted(DESTRUCTIVE),
 )
+BACKFILL_STAGES = ("news", "prices", "sentiment", "analyze", "export")
 
 
 class JobCancelled(BaseException):
@@ -144,12 +146,27 @@ def _run(store: Store, config: Config, params: dict) -> dict:
         _day(params, config),
         params.get("trigger", TRIGGER_API),
         params.get("attempt", 1),
+        kind=params.get("kind", "full"),
     )
     out = {"run_id": store.last_run()["id"], "stages": [r.__dict__ for r in results]}
     failed = [r.name for r in results if not r.ok]
     if failed:
         raise RuntimeError(f"stages failed: {', '.join(failed)}")
     return out
+
+
+@handler("backfill")
+def _backfill(store: Store, config: Config, params: dict) -> dict:
+    from murmur import pipeline
+
+    return pipeline.backfill(
+        store,
+        config,
+        date.fromisoformat(params["from"]),
+        date.fromisoformat(params["to"]),
+        params.get("stages", BACKFILL_STAGES),
+        regenerate=bool(params.get("regenerate")),
+    )
 
 
 @handler("universe")
@@ -294,6 +311,30 @@ def validate(type_: str, params: dict, confirm: bool) -> tuple[dict, str | None]
         if params.get("date"):
             clean["date"] = _iso(params["date"], "date")
             day = clean["date"]
+    if type_ == "run":
+        kind = str(params.get("kind", "full"))
+        if kind not in RUN_KINDS:
+            raise JobError(f"kind must be one of {', '.join(RUN_KINDS)}")
+        if kind != "full":
+            clean["kind"] = kind
+    if type_ == "backfill":
+        if not params.get("from"):
+            raise JobError("from is required")
+        clean["from"] = _iso(params["from"], "from")
+        clean["to"] = _iso(params.get("to") or params["from"], "to")
+        if clean["to"] < clean["from"]:
+            raise JobError("to must not be before from")
+        stages = params.get("stages") or list(BACKFILL_STAGES)
+        if isinstance(stages, str):
+            stages = [x.strip() for x in stages.split(",") if x.strip()]
+        bad = [x for x in stages if x not in BACKFILL_STAGES]
+        if bad or not stages:
+            raise JobError(f"stages must be a non-empty subset of {', '.join(BACKFILL_STAGES)}")
+        clean["stages"] = [x for x in BACKFILL_STAGES if x in set(stages)]
+        if params.get("regenerate"):
+            if not confirm:
+                raise JobError("regenerate deletes the range's analysis; send confirm=true")
+            clean["regenerate"] = True
     if type_ in ("news", "prices"):
         if params.get("from"):
             clean["from"] = _iso(params["from"], "from")
@@ -361,6 +402,24 @@ class DuplicateJob(Exception):
 
 
 # -- the worker ---------------------------------------------------------------
+
+SETTLED = (16, 5)
+"""Local time after which a trading day's bar is complete (same as the price sources)."""
+
+
+def target_day(at: datetime, kind: str) -> date:
+    """Which day a slot firing at ``at`` works on: the full and collect runs take that
+    day; the analyze run takes the most recent session whose close is behind the slot
+    (yesterday's session for a morning slot, the same day for a slot after 16:05 on a
+    trading day)."""
+    from murmur.clock import is_trading_day, previous_session
+
+    today = at.date()
+    if kind != "analyze":
+        return today
+    if is_trading_day(today) and (at.hour, at.minute) >= SETTLED:
+        return today
+    return previous_session(today)
 
 
 class _JobLogHandler(logging.Handler):
@@ -461,34 +520,45 @@ class Worker(threading.Thread):
             self.ready.set()
 
     def _tick(self, store: Store) -> None:
-        """Enqueue today's scheduled run when its slot has passed, and write the heartbeat."""
-        from murmur.scheduler import Scheduler
-
+        """Enqueue each daily slot's run when its time has passed, and write the heartbeat."""
         config = self.provider.get()
         now = self.now()
-        today = now.date().isoformat()
-        sched = Scheduler(config, runner=lambda d, a: True, now=lambda: now)
-        if now >= sched.fire_time(now.date()) and not store.successful_run_exists(today):
-            jobs = store.run_jobs_for_day(today)
-            active = any(j["status"] in ("queued", "running", "cancelling") for j in jobs)
-            attempts = sum(1 for j in jobs if j["status"] in ("failed", "interrupted"))
-            if not active and attempts < 1 + config.schedule.retries:
-                job_id = store.create_job(
-                    "run",
-                    {"date": today, "trigger": TRIGGER_SCHEDULE, "attempt": attempts + 1},
-                    TRIGGER_SCHEDULE,
-                    utc_now_iso(),
-                    day=today,
-                    priority=SCHEDULE_PRIORITY,
-                    attempt=attempts + 1,
-                )
-                log.info(
-                    "scheduler: queued run %d for %s (attempt %d)", job_id, today, attempts + 1
-                )
-                self._wake.set()
+        if not config.schedule.paused:
+            for slot_time, kind in config.schedule.slots:
+                self._queue_slot(store, config, now, slot_time, kind)
         config.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         config.heartbeat_path.write_text(datetime.now().astimezone().isoformat(timespec="seconds"))
         self.last_tick = utc_now_iso()
+
+    def _queue_slot(
+        self, store: Store, config: Config, now: datetime, slot: str, kind: str
+    ) -> None:
+        hour, minute = (int(x) for x in slot.split(":"))
+        fire = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now < fire:
+            return
+        day = target_day(fire, kind).isoformat()  # decided at the slot time, not at `now`
+        if store.successful_run_exists(day, kind):
+            return
+        jobs = store.run_jobs_for_day(day, kind)
+        active = any(j["status"] in ("queued", "running", "cancelling") for j in jobs)
+        attempts = sum(1 for j in jobs if j["status"] in ("failed", "interrupted"))
+        if active or attempts >= 1 + config.schedule.retries:
+            return
+        params = {"date": day, "trigger": TRIGGER_SCHEDULE, "attempt": attempts + 1}
+        if kind != "full":
+            params["kind"] = kind
+        job_id = store.create_job(
+            "run",
+            params,
+            TRIGGER_SCHEDULE,
+            utc_now_iso(),
+            day=day,
+            priority=SCHEDULE_PRIORITY,
+            attempt=attempts + 1,
+        )
+        log.info("scheduler: queued %s run %d for %s (attempt %d)", kind, job_id, day, attempts + 1)
+        self._wake.set()
 
     def _execute(self, store: Store, job) -> None:
         job_id = job["id"]

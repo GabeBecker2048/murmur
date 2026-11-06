@@ -357,3 +357,54 @@ def test_cli_backfill_flags(cfg, monkeypatch, capsys):
         == 0
     )
     assert "2026-11-03..2026-11-04" in capsys.readouterr().out
+
+
+def test_run_kinds_select_stages(store, cfg, monkeypatch):
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [FakeNews()])
+    monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
+    monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
+    collect = pipeline.run_day(store, cfg, DAY, "schedule", kind="collect")
+    assert [r.name for r in collect] == ["universe", "news", "sentiment", "export"]
+    assert all(r.ok for r in collect)
+    assert store.correlations_on("2026-11-05") == []  # nothing analysed yet
+    assert store.successful_run_exists("2026-11-05", "collect")
+    assert not store.successful_run_exists("2026-11-05", "analyze")
+    analyze = pipeline.run_day(store, cfg, DAY, "schedule", kind="analyze")
+    assert [r.name for r in analyze] == ["universe", "prices", "sentiment", "analyze", "export"]
+    assert all(r.ok for r in analyze), [r.summary for r in analyze]
+    assert len(store.correlations_on("2026-11-05")) == 12  # same as a full run
+    assert store.successful_run_exists("2026-11-05", "analyze")
+    assert store.successful_run_exists("2026-11-05")  # any kind
+    assert store.last_run()["kind"] == "analyze"
+
+
+class VariedRangeNews(FakeRangeNews):
+    """Range news with the varied headlines of ``COMPANIES``, dated at the range end."""
+
+    def fetch_range(self, ticker, start, end):
+        self.calls.append((ticker, start, end))
+        headline = COMPANIES[ticker][5]
+        return [Article(f"https://v/{ticker}/{end}", headline, f"{end}T15:00:00Z", self.name)]
+
+
+def test_backfill_runs_the_chosen_stages_and_regenerates(store, cfg, monkeypatch):
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [VariedRangeNews()])
+    monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
+    monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
+    start, end = date(2026, 11, 4), date(2026, 11, 5)
+    out = pipeline.backfill(store, cfg, start, end)
+    assert out["stages"] == ["news", "prices", "sentiment", "analyze", "export"]
+    assert "2026-11-05" in out["analyzed"] and out["files"] > 0
+    assert len(store.correlations_on("2026-11-05")) == 12
+    assert (cfg.published_dir / "correlations/2026/11/05/20261105.daily.parquet").exists()
+
+    # a partial backfill touches only what it is asked to
+    n_articles = store.count("articles")
+    out = pipeline.backfill(store, cfg, start, end, stages=["prices", "export"])
+    assert out["stages"] == ["prices", "export"] and "news" not in out
+    assert store.count("articles") == n_articles
+
+    # regenerate wipes the range's analysis first and rebuilds the months' files
+    out = pipeline.backfill(store, cfg, start, end, stages=["analyze", "export"], regenerate=True)
+    assert out["deleted"]["correlations"] >= 12 and out["months_rebuilt"] == ["2026-11"]
+    assert len(store.correlations_on("2026-11-05")) == 12  # recomputed

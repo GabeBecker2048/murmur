@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from murmur import jobs as jobctl
 from murmur.api.auth import require_token
-from murmur.api.deps import get_config, get_store, get_worker
+from murmur.api.deps import get_config, get_provider, get_store, get_worker
 from murmur.api.schemas import JobCreate
 from murmur.clock import today_in, utc_now_iso
-from murmur.config import Config
+from murmur.config import RUN_KINDS, Config
 from murmur.store import Store
 
 router = APIRouter(tags=["jobs"])
@@ -31,8 +31,12 @@ def job_types():
     return {
         "types": list(jobctl.JOB_TYPES),
         "destructive": sorted(jobctl.DESTRUCTIVE),
+        "confirm_also": {"backfill": "regenerate"},
+        "backfill_stages": list(jobctl.BACKFILL_STAGES),
+        "run_kinds": list(RUN_KINDS),
         "params": {
-            "run": ["date"],
+            "run": ["date", "kind"],
+            "backfill": ["from", "to", "stages", "regenerate"],
             "universe": ["date", "rebuild"],
             "news": ["date", "from", "to"],
             "prices": ["date", "from", "to"],
@@ -109,6 +113,26 @@ def cancel_job(job_id: int, store: Store = Depends(get_store)):
             raise HTTPException(404, "no such job")
         raise HTTPException(409, "job is already finished")
     return {"id": job_id, "status": new}
+
+
+@write.post("/scheduler/pause")
+def pause(request: Request, config: Config = Depends(get_config)):
+    """Stop queueing scheduled runs (persisted in the settings layer). Manual jobs still run."""
+    return _set_paused(request, config, True)
+
+
+@write.post("/scheduler/resume")
+def resume(request: Request, config: Config = Depends(get_config)):
+    return _set_paused(request, config, False)
+
+
+def _set_paused(request: Request, config: Config, paused: bool) -> dict:
+    from murmur.config import write_settings
+
+    provider = get_provider(request)
+    new = write_settings(config, {"schedule": {"paused": paused}}, env=provider.env)
+    provider.invalidate()
+    return {"paused": new.schedule.paused, "slots": new.schedule.slots}
 
 
 @write.post("/scheduler/run-now", status_code=202)

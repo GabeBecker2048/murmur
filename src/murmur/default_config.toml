@@ -13,13 +13,22 @@ max_articles = 20               # per ticker per fetch (Yahoo)
 sources = ["yahoo"]
 
 [prices]
-source = "yfinance"             # or "polygon" (needs an API key; one request per day for all tickers)
+# "yfinance" (no key; today's bar after the close), "databento" (official consolidated
+# end-of-day bars from EQUS.SUMMARY, final at 20:15 ET; needs a key and a morning
+# schedule.analysis_time), or "polygon" (free plan refuses today's bar; backfills).
+source = "yfinance"
+# Split ratios so returns across a split day are right with unadjusted sources:
+# "auto" = polygon when its key is set, else none; "polygon"; "none".
+splits = "auto"
 
 [finnhub]
 api_key = ""                    # or MURMUR_FINNHUB_API_KEY
 
 [polygon]
 api_key = ""                    # or MURMUR_POLYGON_API_KEY
+
+[databento]
+api_key = ""                    # or MURMUR_DATABENTO_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"
@@ -49,8 +58,26 @@ min_market_cap = 10_000_000_000  # screener floor; keep well below the last comp
 
 [schedule]
 time = "18:00"                  # local time in `timezone`, every day incl. weekends
+# A second slot splits the day: at `time` only news is collected (and scored), and at
+# `analysis_time` prices, analysis and export run for the previous session. Needed
+# when the price source's bar for a day is final only in the evening (databento).
+analysis_time = ""              # e.g. "06:30"; empty = one full run at `time`
+paused = false                  # true: the scheduler queues nothing (manual jobs still run)
 retries = 3                     # extra attempts when a stage fails
 retry_delay_minutes = 20
+
+[ui]
+title = "Murmur"
+tagline = "Does news predict prices, follow them, or move with them?"
+default_months = 3              # rolling horizon the dashboard opens with: 1, 3, 6 or 12
+default_method = "pearson"      # or "spearman"
+theme = "auto"                  # "auto", "light" or "dark"; visitors can switch
+
+[datasets]
+# Datasets served from /data only with the API token (still in the manifest,
+# flagged public = false). Keep "prices" here until the price source's terms
+# allow redistribution.
+private = ["prices"]
 
 [api]
 host = "0.0.0.0"

@@ -61,10 +61,20 @@ reconstructed, and `murmur universe` prints the list in force on a day.
 | `gdelt` | news | nothing | yes, to 2015 | global news by company name; one request every 5 s. **Currently refuses every request** with a rate-limit message, from two different networks; keep it off until that changes |
 | `yfinance` | prices | nothing | yes | the default; one request for all tickers |
 | `polygon` | prices | API key | yes, 2 years | grouped daily bars, one request per trading day; 5 calls a minute. The free plan refuses today's bar until the day is over, so it serves backfills, not the 18:00 run |
+| `databento` | prices | API key | yes, since 2018 | the official consolidated end-of-day bar (`EQUS.SUMMARY`, from Nasdaq's end-of-day feed) through Databento's historical API; usage-priced by volume (a year of 500 symbols is a few MB), no subscription. Final at 20:15 ET, so it needs `schedule.analysis_time`. Unadjusted: see splits below. Redistribution carries "Data Provided by Databento" |
 
 `news.sources` lists the news sources the daily run queries; `prices.source`
-picks the price source. Keys go in `[finnhub]`/`[polygon] api_key` or the
-`MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY` environment variables.
+picks the price source. Keys go in `[finnhub]`/`[polygon]`/`[databento]
+api_key` or the `MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY`/
+`MURMUR_DATABENTO_API_KEY` environment variables.
+
+**Splits.** Databento and Polygon deliver unadjusted prices, so a 10-for-1
+split would look like a 90 % loss. `prices.splits` names a source of split
+ratios (`polygon`'s reference endpoint, one request for the whole market;
+`auto` uses it when the key is set) and `compute_returns` divides the previous
+close by the ratio on the split's execution date. The ratio is published as
+`split_ratio` in the prices dataset. Yahoo restates its history instead; the
+adjustment detects that and is not applied twice.
 
 An article reported by several sources is stored once (same URL, or the same
 normalized title within two days), with the earliest publication time and
@@ -85,6 +95,19 @@ Yahoo has no date-range query, so `news --from` needs `finnhub` or `gdelt`
 in `news.sources`. Scoring a backlog runs FinBERT once per headline; the
 server does about eight a second.
 
+Through the API (and the admin UI) the same thing is one `backfill` job: a
+date range, the stages to run (any of `news`, `prices`, `sentiment`,
+`analyze`, `export`, in pipeline order) and optionally `regenerate`, which
+deletes the range's analysis rows first and rebuilds the months' files, so the
+result is a clean slate rather than a merge. Articles are never deleted; a
+re-fetched headline is deduplicated.
+
+```bash
+curl -s -X POST localhost:8100/api/v1/jobs -H "Authorization: Bearer $MURMUR_API_TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"type":"backfill","params":{"from":"2026-10-01","to":"2026-10-31","stages":["prices","analyze","export"],"regenerate":true},"confirm":true}'
+```
+
 ### The daily job and the job queue
 
 `murmur serve` is the process: it serves the API and runs one worker thread
@@ -92,15 +115,25 @@ that executes **jobs** one at a time. The daily run is a job the worker queues
 itself at 18:00 Eastern (every day, weekends included); a failed run is
 re-queued after 20 minutes, up to 3 times. If the process starts after the
 slot and the day has no successful run yet, the run is queued immediately, so
-a restart never loses a day. Each run also completes any trading day from the
+a restart never loses a day.
+
+With `schedule.analysis_time` set (for a price source whose bar is final only
+in the evening, like Databento) the day splits into two slots: at
+`schedule.time` a **collect** run fetches, scores and publishes the day's
+news, and at `analysis_time` (say 06:30) an **analyze** run fetches prices and
+computes and publishes the analysis for the previous session. Each slot has
+its own success record and retries. `POST /api/v1/scheduler/pause` and
+`/resume` stop and restart the queueing (persisted in settings; manual jobs
+still run). Each run also completes any trading day from the
 past week whose analysis is still missing but whose price bars have since
 arrived (Yahoo's bar for a day sometimes disappears for a while in the
 evening), and re-analyses the previous session.
 
 Everything else that takes time or changes data is a job too, so a manual
-backfill can never collide with the daily run: `run`, `universe`, `news` and
-`prices` (one day or a date range), `sentiment`, `analyze` (one day or all),
-`export` (one day, all, or rebuild a month), `backup`, and the destructive
+backfill can never collide with the daily run: `run` (`kind`: full, collect
+or analyze), `backfill` (see above), `universe`, `news` and `prices` (one day
+or a date range), `sentiment`, `analyze` (one day or all), `export` (one day,
+all, or rebuild a month), `backup`, and the destructive
 `delete_analysis`, `delete_scores` and `delete_universe_month`, which need
 `confirm: true`. A job reports progress, keeps a log you can tail, and can be
 cancelled. `murmur schedule` still exists as a scheduler-only fallback with
@@ -165,7 +198,8 @@ Face cache (`HF_HOME` to relocate it).
 GET  /api/v1/health, /status, /latest, /logs
 GET  /api/v1/runs[/{id}]                 the daily run log
 GET  /api/v1/jobs[/{id}[/log?after=]]    the job queue; POST /api/v1/jobs {type, params, confirm}
-DELETE /api/v1/jobs/{id}                 cancel; POST /api/v1/scheduler/run-now
+DELETE /api/v1/jobs/{id}                 cancel; POST /api/v1/scheduler/run-now|pause|resume
+GET  /api/v1/ui                          what the dashboard needs first: title, defaults, index, theme
 GET  /api/v1/settings[/schema]           effective config with provenance; PUT /api/v1/settings
 GET  /api/v1/datasets[/{name}]           the published datasets and their files
 GET  /api/v1/index/m100[/months|/changes|/history/{key}]   the Murmur 100: constituents, weights
@@ -230,13 +264,17 @@ max_articles = 20              # per ticker per fetch (Yahoo)
 sources = ["yahoo"]            # any of "yahoo", "finnhub", "gdelt"
 
 [prices]
-source = "yfinance"            # or "polygon"
+source = "yfinance"            # or "databento" (needs schedule.analysis_time) or "polygon"
+splits = "auto"                # split ratios: polygon when its key is set; "polygon" or "none"
 
 [finnhub]
 api_key = ""                   # or MURMUR_FINNHUB_API_KEY
 
 [polygon]
 api_key = ""                   # or MURMUR_POLYGON_API_KEY
+
+[databento]
+api_key = ""                   # or MURMUR_DATABENTO_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"
@@ -246,14 +284,30 @@ device = "cpu"                 # "cuda" or "auto" with a GPU build of torch
 [sec]
 contact = "you@example.com"    # required by the SEC for the monthly ticker list
 
+[index]
+name = "m100"                  # the published cap-weighted list: "m100" -> Murmur 100
+size = 100
+
 [universe]
 source = "marketcap"           # or "static" for the fixed list below
-size = 100
+size = 100                     # coverage: who gets news and sentiment (<= index.size)
 
 [schedule]
 time = "18:00"                 # in `timezone`, every day
+analysis_time = ""             # e.g. "06:30": prices + analysis for the previous session
+paused = false
 retries = 3
 retry_delay_minutes = 20
+
+[ui]
+title = "Murmur"
+tagline = "Does news predict prices, follow them, or move with them?"
+default_months = 3             # 1, 3, 6 or 12
+default_method = "pearson"
+theme = "auto"                 # "light" or "dark"
+
+[datasets]
+private = ["prices"]           # served only with the API token; flagged public = false
 
 [universe.static]              # used by source = "static"; replaces the packaged list wholesale
 AAPL = "Apple"

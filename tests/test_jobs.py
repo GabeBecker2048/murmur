@@ -219,3 +219,100 @@ def test_worker_stop_cancels_running_job(provider, sleep_job):
     with Store(cfg.store_path) as s:
         assert s.job_status(jid) == "cancelled"
     assert not any(th.name == "murmur-worker" and th.is_alive() for th in threading.enumerate())
+
+
+def test_target_day_for_each_slot_kind():
+    from datetime import date
+
+    morning = datetime(2026, 11, 6, 6, 30, tzinfo=ET)  # Friday morning
+    assert jobs.target_day(morning, "full") == date(2026, 11, 6)
+    assert jobs.target_day(morning, "collect") == date(2026, 11, 6)
+    assert jobs.target_day(morning, "analyze") == date(2026, 11, 5)  # Thursday's session
+    saturday = datetime(2026, 11, 7, 6, 30, tzinfo=ET)
+    assert jobs.target_day(saturday, "analyze") == date(2026, 11, 6)
+    evening = datetime(2026, 11, 6, 21, 0, tzinfo=ET)  # after the close on a trading day
+    assert jobs.target_day(evening, "analyze") == date(2026, 11, 6)
+
+
+def test_split_schedule_queues_collect_and_analyze_runs(provider, monkeypatch):
+    cfg = provider.get()
+    from murmur.config import write_settings
+
+    write_settings(cfg, {"schedule": {"analysis_time": "06:30"}}, env={})
+    provider.invalidate()
+    seen = []
+
+    def fake_run(store, config, params):
+        seen.append((params["date"], params.get("kind", "full")))
+        store.start_run(params["date"], "schedule", 1, "t", kind=params.get("kind", "full"))
+        store.finish_run(store.last_run()["id"], "t", True, "[]")
+        return {}
+
+    monkeypatch.setitem(jobs.HANDLERS, "run", fake_run)
+    clock = {"now": datetime(2026, 11, 6, 6, 31, tzinfo=ET)}  # Friday 06:31: morning slot due
+    worker = jobs.Worker(provider, scheduler=True, tick_seconds=0.05, now=lambda: clock["now"])
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not seen:
+            time.sleep(0.05)
+        assert seen == [("2026-11-05", "analyze")]  # Thursday's session, not Friday
+        clock["now"] = datetime(2026, 11, 6, 18, 1, tzinfo=ET)  # evening: collect for Friday
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(seen) < 2:
+            time.sleep(0.05)
+        assert seen[1] == ("2026-11-06", "collect")
+        time.sleep(0.2)
+        assert len(seen) == 2  # both slots satisfied; nothing more queued
+        with Store(cfg.store_path) as s:
+            assert s.successful_run_exists("2026-11-05", "analyze")
+            assert not s.successful_run_exists("2026-11-05", "collect")
+            assert s.run_jobs_for_day("2026-11-06", "collect") and not s.run_jobs_for_day(
+                "2026-11-06", "analyze"
+            )
+    finally:
+        worker.stop()
+
+
+def test_paused_scheduler_queues_nothing(provider, monkeypatch):
+    cfg = provider.get()
+    from murmur.config import write_settings
+
+    write_settings(cfg, {"schedule": {"paused": True}}, env={})
+    provider.invalidate()
+    monkeypatch.setitem(jobs.HANDLERS, "run", lambda *a: {})
+    clock = {"now": datetime(2026, 11, 5, 18, 5, tzinfo=ET)}
+    worker = jobs.Worker(provider, scheduler=True, tick_seconds=0.05, now=lambda: clock["now"])
+    worker.start()
+    try:
+        time.sleep(0.3)
+        with Store(cfg.store_path) as s:
+            assert s.run_jobs_for_day("2026-11-05") == []
+        assert cfg.heartbeat_path.exists()  # still alive, just idle
+    finally:
+        worker.stop()
+
+
+def test_backfill_validation():
+    with pytest.raises(jobs.JobError, match="from is required"):
+        jobs.validate("backfill", {}, False)
+    with pytest.raises(jobs.JobError, match="confirm"):
+        jobs.validate("backfill", {"from": "2026-11-01", "regenerate": True}, False)
+    with pytest.raises(jobs.JobError, match="stages"):
+        jobs.validate("backfill", {"from": "2026-11-01", "stages": ["universe"]}, False)
+    clean, day = jobs.validate(
+        "backfill",
+        {"from": "2026-11-01", "to": "2026-11-05", "stages": "export, news", "regenerate": True},
+        True,
+    )
+    assert clean == {
+        "from": "2026-11-01",
+        "to": "2026-11-05",
+        "stages": ["news", "export"],
+        "regenerate": True,
+    }
+    assert day is None
+    clean, _ = jobs.validate("run", {"date": "2026-11-05", "kind": "analyze"}, False)
+    assert clean == {"date": "2026-11-05", "kind": "analyze"}
+    with pytest.raises(jobs.JobError, match="kind"):
+        jobs.validate("run", {"kind": "nope"}, False)
