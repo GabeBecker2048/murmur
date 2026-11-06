@@ -49,6 +49,21 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
   (validate first, atomic replace); `LOCKED_KEYS` are refused; `ConfigProvider.get()` reloads
   when either file changes. Tests: `tests/test_api.py`, `test_jobs.py`, `test_settings.py`.
 - Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.
+- The web UI (0.7.0) is `src/murmur/ui/static/`: plain ES modules, no build step, Plotly
+  3.1.0 basic vendored under `vendor/` (MIT; version noted in `vendor/README.md`).
+  `api/ui.py` mounts `/static` and a catch-all that serves `index.html` for `UI_ROUTES`
+  (registered last in `create_app`). `app.js` = router (History API), `api()` client, token
+  in sessionStorage, `el()` DOM builder (textContent only; a test forbids innerHTML), theme
+  toggle (`data-theme` + localStorage, `murmur:theme` event re-themes live charts).
+  `charts.js` wraps Plotly with the CSS tokens (one y-axis per chart, legend for >= 2
+  series, 2px lines, >= 8px markers, category x-axis for <= 10 points). Pages under
+  `pages/` export `render(main, parts, query)` and may return `{destroy}` to stop timers.
+  The series colors are the validated reference palette (blue/orange/aqua for the three
+  matched pairs; status colors only for job states). Verify in a browser before shipping UI
+  changes: `scripts/ui_shots.py` (screenshots of every page, both themes, desktop + phone)
+  and `scripts/ui_review.py` (clicks through every control and admin flow; drives a visible
+  Brave/Chrome over CDP on port 9222 when one is running, else headless Chromium). Our
+  static files are served `no-cache` so a release never leaves stale modules in a browser.
 
 ## Commands
 

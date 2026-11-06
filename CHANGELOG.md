@@ -4,12 +4,17 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-11-06
 
-Datasets, control, the web UI. Three pull requests; released when the last
-one lands.
+Datasets, control, the web UI.
 
 ### Added
+
+- The web UI at `/`: overview, lead/lag explorer, companies, sources, the
+  index, downloads, and an admin area (jobs, backfill, scheduler, settings,
+  logs) behind the API token. Plain ES modules with Plotly.js vendored, no
+  build step, light and dark themes, phone layout. `GET /` and the page
+  routes serve the shell; `/static` serves the files.
 
 - The published tree is six datasets, dataset first, every file named after
   its date and table: `companies`, `m100` (the Murmur 100 with `weight` and a

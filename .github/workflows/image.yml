@@ -35,6 +35,8 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8100/api/v1/health
           curl -fsS http://127.0.0.1:8100/api/v1/status | head -c 300; echo
+          curl -fsS http://127.0.0.1:8100/ | grep -q '/static/app.js'
+          curl -fsS -o /dev/null http://127.0.0.1:8100/static/vendor/plotly-basic.min.js
           docker exec smoke murmur health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8100/api/v1/jobs -H 'content-type: application/json' -d '{"type":"export"}')" = "503"
           docker stop -t 30 smoke
