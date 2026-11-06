@@ -4,6 +4,40 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.3.0] - 2026-11-05
+
+Timing and returns. The dataset now has the shape the lead/lag analysis
+needs.
+
+### Added
+
+- News windows on the NYSE calendar: every article gets a trading day and a
+  window (`overnight`: previous close to open, including weekends and
+  holidays; `intraday`: open to close), with early closes handled.
+- Overnight, intraday and daily returns from open and close, stored in a
+  `returns` table.
+- Per-window sentiment (`window_sentiment`) and correlations per
+  window/return pair at lag 0 (`correlations` now keyed by window,
+  return type and lag).
+- Parquet export for articles, prices, returns and sentiment, one file per
+  trading day, compacted into one file per month once the month is over.
+  CSV stays for the universe and the daily analysis. `murmur export --all`
+  rebuilds the published tree.
+- `murmur analyze` prints every correlation with its confidence interval.
+
+### Changed
+
+- Schema version 3 (migrates automatically); `daily_sentiment` is gone and
+  existing correlation rows become `day`/`daily`/lag 0.
+- Calendar-day bucketing is gone: a non-trading day stores no analysis, its
+  news belongs to the next session.
+- Articles are partitioned in the published tree by trading day, not by
+  publication date.
+
+### Removed
+
+- The CSV versions of the large tables in `data/published/`.
+
 ## [0.2.0] - 2026-11-05
 
 Running daily. From this version the store is meant to grow every day.

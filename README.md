@@ -7,12 +7,14 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.2.0, pre-public.** The pipeline runs daily: a market-cap universe
-of the 100 largest US companies rebalanced monthly, a scheduler with retries
-and a run log, and a Docker image for the server. Timing windows, lead/lag
-analysis, the API and the web UI arrive in later versions. The repository
-stays private until the original contributors agree to publish it, and the
-code is never published to PyPI.
+**Status: 0.3.0, pre-public.** The pipeline runs daily on the server with a
+market-cap universe of the 100 largest US companies. Headlines are bucketed
+into overnight and intraday news windows on the NYSE calendar, three returns
+are computed from open and close, and the published dataset is Parquet with
+monthly compaction. The lead/lag analysis (0.4.0), more sources, the API and
+the web UI arrive in later versions. The repository stays private until the
+original contributors agree to publish it, and the code is never published to
+PyPI.
 
 ## How it works
 
@@ -25,8 +27,8 @@ fails:
 | news | recent headlines for every ticker in the universe | Yahoo Finance via yfinance | `articles`, `article_tickers` |
 | prices | daily OHLCV bars for the last month, one request for all tickers | yfinance | `prices` |
 | sentiment | scores every headline not yet scored | FinBERT (`ProsusAI/finbert`), CPU | `sentiment` |
-| analyze | per-ticker mean sentiment for the day, daily return, Pearson + Spearman across tickers | scipy | `daily_sentiment`, `correlations` |
-| export | the day's tables as CSV plus two charts and `index.json` | | `<data_dir>/published/` |
+| analyze | windows for new articles, the three returns, per-window sentiment, Pearson + Spearman across tickers per window | scipy | `returns`, `window_sentiment`, `correlations` |
+| export | the day's tables as Parquet (CSV for the small ones), two charts and `index.json` | | `<data_dir>/published/` |
 
 Every write is an upsert, so running a day twice stores an article once and
 never rescores it, and every run is logged (`murmur runs`). Dates are calendar
@@ -58,10 +60,31 @@ SIGTERM. Each run also completes any trading day from the past week whose
 analysis is still missing but whose price bars have since arrived (Yahoo's
 bar for a day sometimes disappears for a while in the evening).
 
-In 0.1.0 the day's sentiment for a ticker is the mean of `positive − negative`
-over its headlines published that calendar day, and the return is
-`close / previous close − 1`. The overnight/intraday windows and the lead/lag
-analysis are 0.3.0 and 0.4.0.
+### Windows and returns
+
+Every article is assigned to one trading day and one news window by its
+publication time, on the NYSE calendar (holidays and early closes included):
+
+| window | from | to |
+|---|---|---|
+| overnight(t) | previous session's close (16:00 ET) | today's open (09:30 ET) |
+| intraday(t) | open | close |
+
+News after the close, over a weekend or on a holiday belongs to the next
+session's overnight window. "day" is both windows together. A ticker's
+sentiment for a window is the mean of `positive − negative` over its headlines
+in that window. Three returns are computed from the daily bars:
+
+| return | formula |
+|---|---|
+| overnight | open_t / close_t−1 − 1 |
+| intraday | close_t / open_t − 1 |
+| daily | close_t / close_t−1 − 1 |
+
+0.3.0 correlates each window with its matching return at lag 0 (overnight
+with overnight, intraday with intraday, day with daily) across the universe,
+Pearson and Spearman. The lags and rolling windows that answer the lead/lag
+question are 0.4.0.
 
 ## Install
 
@@ -132,21 +155,28 @@ Tickers everywhere use the SEC and Yahoo form with a dash (`BRK-B`).
 
 ## Data
 
-`data/murmur.sqlite` is the source of truth. `murmur export` writes the day's
-files under `data/published/` in the layout the roadmap fixes for the public
-dataset (CSV now, Parquet from 0.3.0):
+`data/murmur.sqlite` is the source of truth. `murmur export` writes a trading
+day's files under `data/published/` in the layout the roadmap fixes for the
+public dataset; `murmur export --all` rebuilds the whole tree from the store.
 
 ```
-index.json
-universe/2026-11.csv
-articles/2026/11/05.csv
-prices/2026/11/05.csv
-sentiment/2026/11/05.csv
-analysis/daily/2026/11/05.csv              correlations for the day
-analysis/daily/2026/11/05-tickers.csv      per-ticker sentiment and return
+index.json                                 every file: table, date, path, format, rows
+universe/2026-11.csv                       the month's universe
+articles/2026/11/05.parquet                articles of the trading day, with window
+prices/2026/11/05.parquet                  OHLCV bars
+returns/2026/11/05.parquet                 overnight, intraday, daily per ticker
+sentiment/2026/11/05.parquet               per-headline scores with ticker and window
+articles/2026/10.parquet                   a finished month, compacted into one file
+analysis/daily/2026/11/05.csv              correlations for the day (window x return)
+analysis/daily/2026/11/05-tickers.csv      per-ticker, per-window sentiment and returns
 analysis/daily/2026/11/05-sentiment.png
 analysis/daily/2026/11/05-correlation.png
 ```
+
+The large tables are Parquet, one file per trading day, folded into one file
+per month once the month is over (a later backfill is merged in on the next
+export). Articles with no publication time are stored but not exported or
+analysed. `pandas.read_parquet` or DuckDB read the tree directly.
 
 ## Deploy
 
