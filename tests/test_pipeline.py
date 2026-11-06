@@ -22,7 +22,7 @@ class FakeNews:
     def fetch(self, ticker):
         if ticker in self.fail_for:
             raise OSError("boom")
-        _, headline, _, _ = COMPANIES[ticker]
+        headline = COMPANIES[ticker][5]  # the intraday headline (published 10:00 ET)
         return [
             Article(f"https://e/{ticker}/1", headline, "2026-11-05T15:00:00Z", "fake-news"),
             Article(
@@ -42,9 +42,9 @@ class FakePrices:
             return []
         bars = []
         for t in tickers:
-            _, _, prev_close, close = COMPANIES[t]
-            bars.append(PriceBar(t, "2026-11-04", None, None, None, prev_close, None, None))
-            bars.append(PriceBar(t, "2026-11-05", None, None, None, close, None, None))
+            _, prev_close, open_, close, _, _ = COMPANIES[t]
+            bars.append(PriceBar(t, "2026-11-04", prev_close, None, None, prev_close, None, 1))
+            bars.append(PriceBar(t, "2026-11-05", open_, None, None, close, None, 1))
         return bars
 
 
@@ -78,8 +78,10 @@ def test_run_all_end_to_end_and_idempotent(cfg):
         assert len(store.universe_for("2026-11-05")) == 4
         # the 4th has a bar but nothing before it, so no return and no backfill
         assert store.universe_for("2026-11-04") == []
-        assert store.count("correlations") == 2
-        assert "pearson" in results[4].summary
+        # fake articles are all intraday, so overnight has no pairs: intraday + day, 2 methods
+        assert store.count("correlations") == 4
+        assert "intraday/intraday r=" in results[4].summary
+        assert "overnight/overnight has 0 pairs" in results[4].summary
 
         scorer = FakeScorer()
         again = pipeline.run_all(store, cfg, DAY, FakeNews(), FakePrices(), scorer)
@@ -144,14 +146,12 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
     with Store(cfg.store_path) as store:
         # Nov 4: everything but the bars for the 4th itself -> analyze fails that day
         pipeline.run_universe(store, cfg, nov4)
-        for t, (_, headline, _, _) in COMPANIES.items():  # FakeNews dates everything Nov 5
+        for t, (_, _, _, _, _, headline) in COMPANIES.items():  # FakeNews dates everything Nov 5
             store.upsert_article(
                 Article(f"https://e/{t}/4", headline, "2026-11-04T15:00:00Z", "f"), t, "t"
             )
-        for t, (_, _, _, close) in COMPANIES.items():  # Nov 3 close != Nov 4 close
-            store.upsert_prices(
-                [PriceBar(t, "2026-11-03", None, None, None, close, None, None)], "t"
-            )
+        for t, (_, _, _, close, _, _) in COMPANIES.items():  # Nov 3 close != Nov 4 close
+            store.upsert_prices([PriceBar(t, "2026-11-03", close, None, None, close, None, 1)], "t")
         pipeline.run_sentiment(store, cfg, FakeScorer())
         with pytest.raises(RuntimeError, match="no price bars"):
             pipeline.run_analyze(store, cfg, nov4)
@@ -162,8 +162,9 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
         by_name = {r.name: r for r in results}
         assert all(r.ok for r in results), [r.summary for r in results]
         assert "2026-11-04" in by_name["analyze"].summary.split("backfilled ")[1]
+        # the fake Nov 4 bar opens at its close, so intraday is flat and undefined: daily only
         assert len(store.correlations_on("2026-11-04")) == 2
-        assert len(store.correlations_on("2026-11-05")) == 2
+        assert len(store.correlations_on("2026-11-05")) == 4
         assert (cfg.published_dir / "analysis/daily/2026/11/04.csv").exists()
         assert (cfg.published_dir / "analysis/daily/2026/11/05.csv").exists()
 
@@ -220,4 +221,4 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.2.0" in capsys.readouterr().out
+    assert "murmur 0.3.0" in capsys.readouterr().out

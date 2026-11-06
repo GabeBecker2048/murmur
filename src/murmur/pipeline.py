@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from murmur.analysis import DayResult, analyze_day, daily_returns
+from murmur.analysis import DayResult, analyze_day, returns_available
 from murmur.clock import is_trading_day, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
@@ -134,7 +134,7 @@ def backfill_days(store: Store, day: date) -> list[date]:
         prev = day - timedelta(days=back)
         if not is_trading_day(prev) or store.correlations_on(prev.isoformat()):
             continue
-        if not daily_returns(store, prev):
+        if not returns_available(store, prev):
             continue
         out.append(prev)
     return sorted(out)
@@ -158,6 +158,14 @@ def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -
     return written
 
 
+def export_all(store: Store, config: Config) -> list[Path]:
+    """Rebuild the whole published tree from the store (every known day)."""
+    written = []
+    for iso in store.known_days():
+        written += export_day(store, config, date.fromisoformat(iso))
+    return written
+
+
 def _stage(name: str, fn: Callable[[], object], describe: Callable[[object], str]) -> StageResult:
     started = time.perf_counter()
     log.info("%s: starting", name)
@@ -173,13 +181,14 @@ def _stage(name: str, fn: Callable[[], object], describe: Callable[[object], str
 
 def describe_day(result: DayResult) -> str:
     if not result.trading_day:
-        return f"sentiment for {len(result.sentiment)} tickers; {result.note}"
-    parts = [
-        f"sentiment for {len(result.sentiment)} tickers, returns for {len(result.returns)}, "
-        f"{len(result.pairs)} paired"
-    ]
+        return result.note or "not a trading day"
+    day_scores = result.sentiment.get("day", {})
+    parts = [f"returns for {len(result.returns)} tickers, sentiment for {len(day_scores)}"]
     for c in result.correlations:
-        parts.append(f"{c.method} {c.estimate:+.3f} (p={c.p_value:.3f}, n={c.n})")
+        if c.method == "pearson":
+            parts.append(
+                f"{c.window}/{c.return_type} r={c.estimate:+.3f} (p={c.p_value:.3f}, n={c.n})"
+            )
     if result.note:
         parts.append(result.note)
     return "; ".join(parts)
