@@ -21,6 +21,8 @@ class Candidate:
     market_cap: float
     exchange: str
     volume: float | None
+    price: float | None = None
+    """Regular-market price at screen time; with ``market_cap`` it implies the share count."""
 
 
 def parse_screen(payload: dict) -> list[Candidate]:
@@ -38,6 +40,7 @@ def parse_screen(payload: dict) -> list[Candidate]:
                 market_cap=float(cap),
                 exchange=str(q["exchange"]),
                 volume=q.get("averageDailyVolume3Month") or q.get("regularMarketVolume"),
+                price=float(q["regularMarketPrice"]) if q.get("regularMarketPrice") else None,
             )
         )
     return out

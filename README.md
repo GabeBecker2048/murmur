@@ -90,8 +90,19 @@ uv run murmur export --all
 ```
 
 Yahoo has no date-range query, so `news --from` needs `finnhub` or `gdelt`
-in `news.sources`. Scoring a backlog runs FinBERT once per headline; the
-server does about eight a second.
+in `news.sources`; Finnhub's free plan reaches back one year, so that is the
+practical horizon for news (prices go back decades). Scoring a backlog runs
+FinBERT once per headline; the server does about eight a second. Headlines
+already stored are never touched by a backfill: a headline both sources carried
+is kept once with both sources recorded.
+
+**Past months are reconstructed.** The index for a month in the past cannot
+use today's caps, so each candidate's cap on that month's first trading day is
+rebuilt from its shares outstanding then (the SEC's XBRL frames, public
+domain; today's implied count when a company reports per share class) times
+its close that day. Those months carry `reconstructed = true` in the index
+dataset. The candidate pool is today's screener list, so a company that has
+since shrunk below the floor or been delisted is missed.
 
 Through the API (and the admin UI) the same thing is one `backfill` job: a
 date range, the stages to run (any of `news`, `prices`, `sentiment`,

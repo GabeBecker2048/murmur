@@ -96,3 +96,24 @@ def test_config_sources_and_keys(tmp_path):
     bad.write_text('[prices]\nsource = "iex"\n')
     with pytest.raises(ConfigError):
         load_config(bad, env={})
+
+
+def test_finnhub_retries_once_on_429(monkeypatch):
+    from datetime import date
+
+    from murmur.sources import finnhub as fh
+    from murmur.sources.base import HttpError
+
+    calls = {"n": 0}
+
+    def fake_get(url, params):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise HttpError(429, url, "API limit reached")
+        return [{"headline": "ok", "url": "https://x/1", "datetime": 1760000000, "source": "r"}]
+
+    slept = []
+    monkeypatch.setattr(fh, "get_json", fake_get)
+    src = fh.FinnhubNews("k", sleep=slept.append)
+    out = src.fetch_range("AAPL", date(2026, 11, 1), date(2026, 11, 5))
+    assert len(out) == 1 and calls["n"] == 2 and slept == [fh.RETRY_WAIT]

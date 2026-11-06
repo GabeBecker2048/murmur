@@ -125,7 +125,12 @@ are gitignored.
 - `universe.py` `MarketCapUniverse.build(month)`: screener candidates in cap order, keep
   those on NYSE/Nasdaq with an SEC CIK, one per CIK, country == "United States" (cached in
   `companies` for a year), top `index.size`, each with `weight` (cap / total) and
-  `exchange`. This is the index (`universe_months`, published as `m100`); the coverage
+  `exchange`. A month before the current applicable one is **reconstructed**
+  (`build_historical`): SEC `frames` share counts (`sec.fetch_shares_outstanding`,
+  `frame_for` = last quarter end 45 days before the month start) or today's implied count
+  (`historical_shares`, `SHARES_SANITY`) times `yfinance_prices.closes_on` that day, then
+  re-ranked; `source.method(month)` -> `universe_months.method` (schema v9). This is the
+  index (`universe_months`, published as `m100`); the coverage
   (`universe.size`, at most `index.size`) is its top slice and is what `membership_for`
   records per day in `universe_membership` and what analysis reads. `applicable_month(day)`
   is this month from its first trading day, else the previous month. `StaticUniverse` for

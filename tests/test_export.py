@@ -83,15 +83,17 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
         "exchange",
         "market_cap",
         "weight",
+        "reconstructed",
     ]
     assert len(constituents) == 4 and set(constituents["effective_date"]) == {"2026-11-02"}
+    assert not constituents["reconstructed"].any()
 
     companies = pd.read_parquet(base / "companies/2026/11/202611.companies.parquet")
     assert len(companies) == 4 and list(companies.columns)[:3] == ["cik", "ticker", "name"]
     assert set(companies["first_month"]) == {"2026-11"}
 
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.7.0"
+    assert index["murmur_version"] == "0.7.1"
     assert list(index["datasets"]) == [
         "companies",
         "m100",

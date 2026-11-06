@@ -55,6 +55,7 @@ def constituents(
         "month": month,
         "effective_date": first_trading_day(year, mm).isoformat(),
         "size": len(members),
+        "method": store.universe_month_method(month),
         "covered": len(members)
         if config.universe.source == "static"
         else min(len(members), config.universe.size),
