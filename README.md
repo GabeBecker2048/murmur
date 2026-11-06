@@ -7,15 +7,18 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.4.0, pre-public.** The pipeline runs daily on the server with a
-market-cap universe of the 100 largest US companies. Headlines are bucketed
-into overnight and intraday news windows on the NYSE calendar, three returns
-are computed from open and close, and every window is correlated with every
+**Status: 0.5.0, pre-public.** The pipeline runs daily on the server with a
+market-cap universe of the 100 largest US companies. Headlines come from
+Yahoo, Finnhub and GDELT, prices from yfinance or Polygon, all behind the same
+interfaces; an article seen through several sources is stored once, and every
+correlation is computed per source as well as pooled. Headlines are bucketed
+into overnight and intraday windows on the NYSE calendar, three returns are
+computed from open and close, and every window is correlated with every
 return at lags −1, 0 and +1, daily and over rolling 1 to 12-month horizons.
-This is the first version that can say something about the central question,
-once enough days have accumulated. More sources, the API and the web UI
-arrive in later versions. The repository stays private until the original
-contributors agree to publish it, and the code is never published to PyPI.
+History can be backfilled through the sources that support date ranges. The
+API and the web UI arrive in later versions. The repository stays private
+until the original contributors agree to publish it, and the code is never
+published to PyPI.
 
 ## How it works
 
@@ -25,8 +28,8 @@ fails:
 | stage | what it does | source | table |
 |---|---|---|---|
 | universe | the companies in the index that day (built once a month, see below) | SEC + Yahoo screener | `universe_months`, `universe_membership` |
-| news | recent headlines for every ticker in the universe | Yahoo Finance via yfinance | `articles`, `article_tickers` |
-| prices | daily OHLCV bars for the last month, one request for all tickers | yfinance | `prices` |
+| news | recent headlines for every ticker in the universe, from each configured source | Yahoo (yfinance), Finnhub, GDELT | `articles`, `article_tickers`, `article_sources` |
+| prices | daily OHLCV bars for the last month | yfinance (one request) or Polygon (one request per day) | `prices` |
 | sentiment | scores every headline not yet scored | FinBERT (`ProsusAI/finbert`), CPU | `sentiment` |
 | analyze | windows for new articles, the three returns, per-window sentiment, correlations at lags −1/0/+1 across tickers, and the rolling lead/lag results | scipy | `returns`, `window_sentiment`, `correlations`, `rolling_correlations` |
 | export | the day's tables as Parquet (CSV for the small ones), two charts and `index.json` | | `<data_dir>/published/` |
@@ -49,6 +52,39 @@ companies traded through ADRs. The list is rebuilt for each month and takes
 effect on its first trading day; days before that use the previous month.
 Membership is recorded per day, so any past day's universe can be
 reconstructed, and `murmur universe` prints the list in force on a day.
+
+### Sources
+
+| source | kind | needs | date ranges | notes |
+|---|---|---|---|---|
+| `yahoo` | news | nothing | no | the latest ~20 headlines per ticker; the default |
+| `finnhub` | news | API key | yes, ~1 year | company news by ticker and date; 60 calls a minute |
+| `gdelt` | news | nothing | yes, to 2015 | global news by company name; one request every 5 s, so a 100-ticker run takes ~9 min |
+| `yfinance` | prices | nothing | yes | the default; one request for all tickers |
+| `polygon` | prices | API key | yes, 2 years | grouped daily bars, one request per trading day; 5 calls a minute |
+
+`news.sources` lists the news sources the daily run queries; `prices.source`
+picks the price source. Keys go in `[finnhub]`/`[polygon] api_key` or the
+`MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY` environment variables.
+
+An article reported by several sources is stored once (same URL, or the same
+normalized title within two days), with the earliest publication time and
+every reporting source recorded. Sentiment and correlations are computed
+pooled over sources (`source = "all"`) and, once more than one source has
+reported, for each source separately, so sources can be compared.
+
+### Backfilling history
+
+```bash
+uv run murmur prices --from 2026-08-01 --to 2026-10-31   # bars for the range
+uv run murmur news   --from 2026-08-01 --to 2026-10-31   # through finnhub/gdelt, a week at a time
+uv run murmur analyze --all                               # score, then recompute every day
+uv run murmur export --all
+```
+
+Yahoo has no date-range query, so `news --from` needs `finnhub` or `gdelt`
+in `news.sources`. Scoring a backlog runs FinBERT once per headline; the
+server does about eight a second.
 
 ### The daily job
 
@@ -121,6 +157,7 @@ uv run murmur run                      # today: universe -> news -> prices -> se
 uv run murmur run --date 2026-11-04    # a specific day
 uv run murmur universe                 # the list in force today (--rebuild to recompute the month)
 uv run murmur news                     # one stage at a time
+uv run murmur news --from 2026-10-01   # backfill a date range (finnhub/gdelt)
 uv run murmur prices
 uv run murmur analyze                  # scores pending headlines, then the day's analysis
 uv run murmur analyze --all            # recompute every day (after a schema change)
@@ -144,7 +181,17 @@ data_dir = "data"              # store at data/murmur.sqlite, exports at data/pu
 timezone = "America/New_York"
 
 [news]
-max_articles = 20              # per ticker per fetch
+max_articles = 20              # per ticker per fetch (Yahoo)
+sources = ["yahoo"]            # any of "yahoo", "finnhub", "gdelt"
+
+[prices]
+source = "yfinance"            # or "polygon"
+
+[finnhub]
+api_key = ""                   # or MURMUR_FINNHUB_API_KEY
+
+[polygon]
+api_key = ""                   # or MURMUR_POLYGON_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"
@@ -179,13 +226,13 @@ day's files under `data/published/`, date first, one Parquet file per table;
 ```
 index.json                              every file: table, date, path, format, rows
 2026/11/universe.parquet                the month's universe (rank, ticker, name, market cap, CIK)
-2026/11/05/articles.parquet             the trading day's articles, with window
+2026/11/05/articles.parquet             the trading day's articles, with window and reporting sources
 2026/11/05/prices.parquet               OHLCV bars
 2026/11/05/returns.parquet              overnight, intraday, daily per ticker
 2026/11/05/sentiment.parquet            per-headline scores with ticker and window
-2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns
-2026/11/05/correlations.parquet         the day's correlations (window x return x lag)
-2026/11/05/rolling_correlations.parquet rolling 1/3/6/12-month results as of the day, pooled and per ticker
+2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns, per source
+2026/11/05/correlations.parquet         the day's correlations (window x return x lag x source)
+2026/11/05/rolling_correlations.parquet rolling 1/3/6/12-month results as of the day, pooled/per ticker, per source
 2026/11/05/sentiment.png, correlation.png, leadlag.png
 2026/10/prices.parquet ...              a finished month, compacted into one file per table
 ```
@@ -224,6 +271,14 @@ docker compose exec murmur murmur runs        # the run log
 `deploy/murmur-backup.sh` snapshots the SQLite file with the online backup
 API (the DB is in WAL mode, so never `cp` it), checks integrity and keeps the
 newest 14 copies. The full offsite backup is 0.8.0.
+
+## Contributing
+
+Work happens on branches and lands through pull requests; `main` is never
+pushed to directly. Pull requests are squash-merged (the title and body become
+the commit) and the branch is deleted on merge. Only the maintainers (Gabe,
+Wyatt, Sam) can merge. Releases are tags cut from `main` with
+`scripts/release.sh`.
 
 ## Develop
 
