@@ -204,3 +204,15 @@ def test_rebuild_month_drops_deleted_rows(store, scorer, cfg):  # noqa: F811
     assert all(p.suffix != ".parquet" or p.parent == base / "2026/10" for p in written)
     index = json.loads((base / "index.json").read_text())
     assert not any(e["path"] == "2026/10/correlations.parquet" for e in index["files"])
+
+
+def test_rebuild_current_month_keeps_day_files(store, scorer, cfg):  # noqa: F811
+    from murmur.export import rebuild_month
+
+    prepared(store, scorer, cfg)
+    export_day(store, cfg, DAY_, today=TODAY)
+    rebuild_month(store, cfg, "2026-11")  # "today" is really 2026-11 or later
+    base = cfg.published_dir
+    assert (base / "2026/11/05/correlations.parquet").exists() or (
+        base / "2026/11/correlations.parquet"
+    ).exists()

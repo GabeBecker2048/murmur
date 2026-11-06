@@ -345,8 +345,9 @@ def compact_month(base: Path, table: str, month: str) -> Path | None:
 
 
 def rebuild_month(store: Store, config: Config, month: str) -> list[Path]:
-    """Regenerate a finished month's files from the store (not a merge), so
-    deletions reach the published tree. Day directories keep only their charts."""
+    """Regenerate a month's files from the store (not a merge), so deletions
+    reach the published tree. A finished month ends up compacted, the current
+    month as day files."""
     import shutil
 
     base = config.published_dir
@@ -359,11 +360,13 @@ def rebuild_month(store: Store, config: Config, month: str) -> list[Path]:
                 p.unlink()
             if not any(ddir.iterdir()):
                 shutil.rmtree(ddir, ignore_errors=True)
+    today = today_in(config.timezone)
     written: list[Path] = []
     for iso in store.known_days():
         if iso.startswith(month):
-            written += export_day(store, config, date.fromisoformat(iso), today=date.max)
-    written += compact_finished_months(base, "9999-99")
+            written += export_day(store, config, date.fromisoformat(iso), today=today)
+    # a finished month compacts; the current month keeps its day files
+    written += compact_finished_months(base, month_key(today))
     _write_index(base)
     return sorted(p for p in set(written) if p.exists())
 
