@@ -7,12 +7,12 @@ import json
 import logging
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
-from murmur.analysis import DayResult, analyze_day, returns_available
-from murmur.clock import is_trading_day, utc_now_iso
+from murmur.analysis import DayResult, analyze_day, returns_available, rolling_analysis
+from murmur.clock import is_trading_day, previous_session, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
 from murmur.sentiment import SentimentScorer, score_pending
@@ -123,6 +123,13 @@ def run_sentiment(store: Store, config: Config, scorer: SentimentScorer | None =
 class AnalyzeResult:
     today: DayResult
     backfilled: list[date]
+    reanalyzed: list[date] = field(default_factory=list)
+    """The previous session, re-analysed now that its lag +1 returns exist."""
+    rolling_rows: int = 0
+
+    @property
+    def exported_with_today(self) -> list[date]:
+        return sorted({*self.backfilled, *self.reanalyzed})
 
 
 def backfill_days(store: Store, day: date) -> list[date]:
@@ -147,8 +154,33 @@ def run_analyze(store: Store, config: Config, day: date) -> AnalyzeResult:
         analyze_day(store, config, prev, [m.ticker for m in members])
         backfilled.append(prev)
         log.info("analyze: backfilled %s", prev)
-    today = analyze_day(store, config, day, universe_tickers(store, day))
-    return AnalyzeResult(today, backfilled)
+    tickers = universe_tickers(store, day)
+    today = analyze_day(store, config, day, tickers)
+    reanalyzed = []
+    if today.trading_day:
+        # Second pass: the previous session (and any day backfilled above) gains its
+        # lag +1 pairs now that the following session's returns exist, and its
+        # article file picks up headlines that only arrived today.
+        again = sorted({*backfilled, previous_session(day)})
+        for d in again:
+            if returns_available(store, d):
+                members, _ = membership_for(store, config, d)
+                analyze_day(store, config, d, [m.ticker for m in members])
+                reanalyzed.append(d)
+    rolling_rows = len(rolling_analysis(store, config, day, tickers)) if today.trading_day else 0
+    return AnalyzeResult(today, backfilled, reanalyzed, rolling_rows)
+
+
+def analyze_all(store: Store, config: Config) -> list[date]:
+    """Recompute the daily analysis for every day with returns, oldest first,
+    then the rolling analysis as of the last one. For after a schema change."""
+    days = [date.fromisoformat(d) for d in store.days_with_returns()]
+    for d in days:
+        members, _ = membership_for(store, config, d)
+        analyze_day(store, config, d, [m.ticker for m in members])
+    if days:
+        rolling_analysis(store, config, days[-1], universe_tickers(store, days[-1]))
+    return days
 
 
 def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -> list[Path]:
@@ -184,11 +216,9 @@ def describe_day(result: DayResult) -> str:
         return result.note or "not a trading day"
     day_scores = result.sentiment.get("day", {})
     parts = [f"returns for {len(result.returns)} tickers, sentiment for {len(day_scores)}"]
-    for c in result.correlations:
-        if c.method == "pearson":
-            parts.append(
-                f"{c.window}/{c.return_type} r={c.estimate:+.3f} (p={c.p_value:.3f}, n={c.n})"
-            )
+    for c in result.matched():
+        parts.append(f"{c.window}/{c.return_type} r={c.estimate:+.3f} (p={c.p_value:.3f}, n={c.n})")
+    parts.append(f"{len(result.correlations)} correlation rows")
     if result.note:
         parts.append(result.note)
     return "; ".join(parts)
@@ -196,6 +226,10 @@ def describe_day(result: DayResult) -> str:
 
 def describe_analyze(result: AnalyzeResult) -> str:
     text = describe_day(result.today)
+    if result.rolling_rows:
+        text += f"; rolling {result.rolling_rows} rows"
+    if result.reanalyzed:
+        text += "; re-analysed " + ", ".join(d.isoformat() for d in result.reanalyzed)
     if result.backfilled:
         text += "; backfilled " + ", ".join(d.isoformat() for d in result.backfilled)
     return text
@@ -215,7 +249,7 @@ def run_all(
 
     def analyze() -> AnalyzeResult:
         result = run_analyze(store, config, day)
-        backfilled.extend(result.backfilled)
+        backfilled.extend(result.exported_with_today)
         return result
 
     stages: Iterable[tuple[str, Callable[[], object], Callable[[object], str]]] = (

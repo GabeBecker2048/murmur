@@ -49,7 +49,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert len(returns) == 4 and set(returns.columns) >= {"overnight", "intraday", "daily"}
     assert len(pd.read_parquet(base / "2026/11/05/sentiment.parquet")) == 8
     corr = pd.read_parquet(base / "2026/11/05/correlations.parquet")
-    assert len(corr) == 6 and list(corr.columns)[:4] == ["date", "window", "return_type", "lag"]
+    assert len(corr) == 18 and list(corr.columns)[:4] == ["date", "window", "return_type", "lag"]
     ws = pd.read_parquet(base / "2026/11/05/window_sentiment.parquet")
     assert len(ws) == 12 and list(ws.columns) == [
         "date",
@@ -65,8 +65,9 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert list(universe.columns) == ["month", "rank", "ticker", "name", "market_cap", "cik"]
     assert len(universe) == 4
 
+    assert not (base / "2026/11/05/rolling_correlations.parquet").exists()  # nothing rolling yet
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.3.0"
+    assert index["murmur_version"] == "0.4.0"
     entries = {e["path"]: e for e in index["files"]}
     assert entries["2026/11/05/returns.parquet"] == {
         "table": "returns",
@@ -137,7 +138,7 @@ def test_monthly_compaction(store, scorer, cfg):  # noqa: F811
     export_day(store, cfg, oct30, today=TODAY)
     assert len(pd.read_parquet(base / "2026/10/articles.parquet")) == 8
     assert len(pd.read_parquet(base / "2026/10/returns.parquet")) == 4
-    assert len(pd.read_parquet(base / "2026/10/correlations.parquet")) == 6
+    assert len(pd.read_parquet(base / "2026/10/correlations.parquet")) == 18
     assert compact_month(base, "articles", "2026-10") is None  # nothing daily left
 
 
@@ -153,3 +154,28 @@ def test_export_all(store, scorer, cfg):  # noqa: F811
     written = pipeline.export_all(store, cfg)
     days = {p.relative_to(cfg.published_dir).as_posix() for p in written}
     assert "2026/11/04/prices.parquet" in days and "2026/11/05/prices.parquet" in days
+
+
+def test_rolling_table_and_leadlag_chart(store, scorer, cfg):  # noqa: F811
+    from datetime import date as _date
+
+    from murmur.analysis import rolling_analysis
+    from murmur.clock import sessions_between
+    from tests.test_analysis import seed_series
+
+    days = sessions_between(_date(2026, 8, 1), _date(2026, 11, 5))
+    seed_series(store, days, lead=1)
+    record_universe(store, cfg, DAY_)
+    rolling_analysis(store, cfg, DAY_, ["AAPL", "MSFT", "GOOGL", "META"])
+    written = export_day(store, cfg, DAY_, today=TODAY)
+    names = {p.name for p in written}
+    assert "rolling_correlations.parquet" in names and "leadlag.png" in names
+    df = pd.read_parquet(cfg.published_dir / "2026/11/05/rolling_correlations.parquet")
+    assert set(df["months"]) == {1, 3, 6, 12} and set(df["scope"]) == {"pooled", "ticker"}
+    assert list(df.columns)[:5] == ["as_of", "months", "window", "return_type", "lag"]
+    assert (cfg.published_dir / "2026/11/05/leadlag.png").stat().st_size > 5000
+    index = {
+        e["path"]: e for e in json.loads((cfg.published_dir / "index.json").read_text())["files"]
+    }
+    assert index["2026/11/05/leadlag.png"]["table"] == "charts"
+    assert index["2026/11/05/rolling_correlations.parquet"]["rows"] == len(df)

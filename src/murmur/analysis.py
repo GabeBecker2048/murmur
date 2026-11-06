@@ -1,9 +1,15 @@
-"""Daily analysis for a trading day: assign articles to news windows, compute
-the three returns from open and close, aggregate sentiment per window, and
-correlate each window with its matching return across the universe (lag 0).
+"""Analysis.
 
-0.4.0 adds lags -1/+1, the full window x return cross product and rolling
-windows. Sentiment and returns are always joined **by ticker**.
+Daily (cross-sectional): for a trading day, assign articles to windows, compute
+the three returns, aggregate sentiment per window, and correlate every window
+with every return at lags -1, 0 and +1 across the universe. ``lag`` is the
+return's day minus the sentiment's day in sessions: +1 means today's news
+against tomorrow's return (news leads), -1 means today's news against
+yesterday's return (news follows).
+
+Rolling: as of a day, the same correlations pooled over every (ticker, day)
+observation in the last 1, 3, 6 and 12 months, and per ticker over its own
+series. Sentiment and returns are always joined **by ticker**.
 """
 
 from __future__ import annotations
@@ -19,7 +25,10 @@ from murmur.clock import (
     OVERNIGHT,
     assign_window,
     is_trading_day,
+    months_before,
     previous_session,
+    session_offset,
+    sessions_between,
     utc_now_iso,
 )
 from murmur.config import Config
@@ -28,16 +37,25 @@ from murmur.store import Store
 log = logging.getLogger(__name__)
 
 MIN_PAIRS = 3
+MIN_POOLED = 30
+MIN_TICKER = 10
 SCOPE = "pooled"
 SOURCE = "all"
-LAG = 0
+POOLED = ""
+"""``ticker`` value of a pooled rolling row (NULL would break the primary key)."""
 
-WINDOW_PAIRS: tuple[tuple[str, str], ...] = (
+WINDOWS_ALL = (OVERNIGHT, INTRADAY, DAY)
+RETURN_TYPES = ("overnight", "intraday", "daily")
+LAGS = (-1, 0, 1)
+HORIZONS = (1, 3, 6, 12)
+"""Rolling windows in months."""
+
+MATCHED_PAIRS: tuple[tuple[str, str], ...] = (
     (OVERNIGHT, "overnight"),
     (INTRADAY, "intraday"),
     (DAY, "daily"),
 )
-"""(news window, return type) pairs correlated at lag 0."""
+"""The window/return pairs that cover the same clock time (the headline numbers)."""
 
 WINDOW_MEMBERS = {OVERNIGHT: (OVERNIGHT,), INTRADAY: (INTRADAY,), DAY: (OVERNIGHT, INTRADAY)}
 
@@ -78,14 +96,14 @@ class Pair:
 class Correlation:
     window: str
     return_type: str
+    lag: int
     method: str
     n: int
     estimate: float
     p_value: float
     ci_low: float | None
     ci_high: float | None
-    tickers: tuple[str, ...]
-    lag: int = LAG
+    tickers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -96,10 +114,21 @@ class DayResult:
     returns: dict[str, Return] = field(default_factory=dict)
     sentiment: dict[str, dict[str, tuple[int, float]]] = field(default_factory=dict)
     """window -> ticker -> (n_articles, mean_score)"""
-    pairs: dict[str, list[Pair]] = field(default_factory=dict)
-    """window -> pairs with the matching return"""
+    pairs: dict[tuple[str, str, int], list[Pair]] = field(default_factory=dict)
+    """(window, return_type, lag) -> pairs"""
     correlations: list[Correlation] = field(default_factory=list)
     note: str | None = None
+
+    def matched(self, method: str = "pearson") -> list[Correlation]:
+        """The lag-0 matched pairs, for one-line summaries."""
+        return [
+            c
+            for c in self.correlations
+            if c.lag == 0 and c.method == method and (c.window, c.return_type) in MATCHED_PAIRS
+        ]
+
+
+# -- daily ------------------------------------------------------------------
 
 
 def assign_windows(store: Store, tz: str) -> int:
@@ -156,6 +185,11 @@ def compute_returns(store: Store, day: date) -> dict[str, Return]:
     return out
 
 
+def stored_returns(store: Store, day: date) -> dict[str, dict[str, float]]:
+    """``ticker -> {overnight, intraday, daily}`` from the ``returns`` table."""
+    return {r["ticker"]: {k: r[k] for k in RETURN_TYPES} for r in store.returns_on(day.isoformat())}
+
+
 def window_sentiment(
     store: Store, day: date, model: str
 ) -> dict[str, dict[str, tuple[int, float]]]:
@@ -170,63 +204,44 @@ def _fisher_ci(res, n: int) -> tuple[float | None, float | None]:
     return float(ci.low), float(ci.high)
 
 
-def correlate(window: str, return_type: str, pairs: list[Pair]) -> list[Correlation]:
-    if len(pairs) < MIN_PAIRS:
-        return []
+def correlate_xy(
+    x: list[float], y: list[float]
+) -> list[tuple[str, float, float, float | None, float | None]]:
+    """``(method, estimate, p, ci_low, ci_high)`` for Pearson and Spearman, skipping
+    undefined (constant input) results."""
     import warnings
 
     from scipy import stats
 
-    x = [p.sentiment for p in pairs]
-    y = [p.ret for p in pairs]
-    tickers = tuple(p.ticker for p in pairs)
-    n = len(pairs)
-    out: list[Correlation] = []
+    n = len(x)
+    out = []
     with warnings.catch_warnings():
-        # a constant input (every ticker flat) yields NaN, which is reported below
         warnings.simplefilter("ignore", stats.ConstantInputWarning)
         pearson = stats.pearsonr(x, y)
         spearman = stats.spearmanr(x, y)
     if math.isfinite(pearson.statistic):
         lo, hi = _fisher_ci(pearson, n)
-        out.append(
-            Correlation(
-                window,
-                return_type,
-                "pearson",
-                n,
-                float(pearson.statistic),
-                float(pearson.pvalue),
-                lo,
-                hi,
-                tickers,
-            )
-        )
-    else:
-        log.warning("%s/%s pearson undefined (constant input) for %d pairs", window, return_type, n)
+        out.append(("pearson", float(pearson.statistic), float(pearson.pvalue), lo, hi))
     if math.isfinite(spearman.statistic):
-        out.append(
-            Correlation(
-                window,
-                return_type,
-                "spearman",
-                n,
-                float(spearman.statistic),
-                float(spearman.pvalue),
-                None,
-                None,
-                tickers,
-            )
-        )
-    else:
-        log.warning(
-            "%s/%s spearman undefined (constant input) for %d pairs", window, return_type, n
-        )
+        out.append(("spearman", float(spearman.statistic), float(spearman.pvalue), None, None))
     return out
 
 
+def correlate(window: str, return_type: str, lag: int, pairs: list[Pair]) -> list[Correlation]:
+    if len(pairs) < MIN_PAIRS:
+        return []
+    tickers = tuple(p.ticker for p in pairs)
+    return [
+        Correlation(window, return_type, lag, method, len(pairs), est, p, lo, hi, tickers)
+        for method, est, p, lo, hi in correlate_xy(
+            [p.sentiment for p in pairs], [p.ret for p in pairs]
+        )
+    ]
+
+
 def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> DayResult:
-    """Compute and store the day's returns, window sentiment and correlations.
+    """Compute and store the day's returns, window sentiment and correlations
+    at every lag whose return day has returns.
 
     ``tickers`` is the universe for the day; anything outside it is ignored.
     """
@@ -252,41 +267,188 @@ def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> 
         result.sentiment[window] = kept
         store.upsert_window_sentiment(iso, window, model, kept)
 
+    # returns by lag: lag 0 from this run, the others from the returns table
+    returns_at: dict[int, dict[str, dict[str, float]]] = {
+        0: {t: {k: r.by_type(k) for k in RETURN_TYPES} for t, r in result.returns.items()}
+    }
+    for lag in LAGS:
+        if lag:
+            returns_at[lag] = stored_returns(store, session_offset(day, lag))
+
     computed_at = utc_now_iso()
     thin = []
-    for window, return_type in WINDOW_PAIRS:
+    for window in WINDOWS_ALL:
         scores = result.sentiment[window]
-        pairs = [
-            Pair(t, scores[t][0], scores[t][1], result.returns[t].by_type(return_type))
-            for t in sorted(universe)
-            if t in scores and t in result.returns
-        ]
-        result.pairs[window] = pairs
-        found = correlate(window, return_type, pairs)
-        if not found:
-            thin.append(f"{window}/{return_type} has {len(pairs)} pairs")
-        result.correlations += found
-        for c in found:
-            store.upsert_correlation(
-                {
-                    "date": iso,
-                    "window": c.window,
-                    "return_type": c.return_type,
-                    "lag": c.lag,
-                    "scope": SCOPE,
-                    "source": SOURCE,
-                    "method": c.method,
-                    "model": model,
-                    "n": c.n,
-                    "estimate": c.estimate,
-                    "p_value": c.p_value,
-                    "ci_low": c.ci_low,
-                    "ci_high": c.ci_high,
-                    "tickers": ",".join(c.tickers),
-                    "computed_at": computed_at,
-                }
-            )
+        for lag in LAGS:
+            rets = {t: v for t, v in returns_at[lag].items() if t in universe}
+            for return_type in RETURN_TYPES:
+                pairs = [
+                    Pair(t, scores[t][0], scores[t][1], rets[t][return_type])
+                    for t in sorted(universe)
+                    if t in scores and t in rets
+                ]
+                result.pairs[(window, return_type, lag)] = pairs
+                found = correlate(window, return_type, lag, pairs)
+                if not found and lag == 0 and (window, return_type) in MATCHED_PAIRS:
+                    thin.append(f"{window}/{return_type} has {len(pairs)} pairs")
+                result.correlations += found
+                for c in found:
+                    store.upsert_correlation(
+                        {
+                            "date": iso,
+                            "window": c.window,
+                            "return_type": c.return_type,
+                            "lag": c.lag,
+                            "scope": SCOPE,
+                            "source": SOURCE,
+                            "method": c.method,
+                            "model": model,
+                            "n": c.n,
+                            "estimate": c.estimate,
+                            "p_value": c.p_value,
+                            "ci_low": c.ci_low,
+                            "ci_high": c.ci_high,
+                            "tickers": ",".join(c.tickers),
+                            "computed_at": computed_at,
+                        }
+                    )
     if thin:
         result.note = "; ".join(thin)
         log.info(result.note)
     return result
+
+
+# -- rolling ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RollingRow:
+    months: int
+    window: str
+    return_type: str
+    lag: int
+    scope: str
+    ticker: str
+    method: str
+    n: int
+    estimate: float
+    p_value: float
+    ci_low: float | None
+    ci_high: float | None
+
+
+def rolling_analysis(
+    store: Store, config: Config, as_of: date, tickers: list[str]
+) -> list[RollingRow]:
+    """Correlations over the last 1/3/6/12 months as of ``as_of``: pooled over
+    every (ticker, day) observation, and per ticker over its own series. Rows
+    for ``as_of`` are replaced in the store."""
+    import pandas as pd
+
+    model = config.sentiment.model
+    universe = set(tickers)
+    start = months_before(as_of, max(HORIZONS))
+    sessions = sessions_between(months_before(start, 1), as_of)
+    index = {d.isoformat(): i for i, d in enumerate(sessions)}
+
+    ws = pd.DataFrame(
+        [
+            tuple(r)
+            for r in store.window_sentiment_between(start.isoformat(), as_of.isoformat(), model)
+        ],
+        columns=["date", "ticker", "window", "n_articles", "mean_score"],
+    )
+    rets = pd.DataFrame(
+        [tuple(r) for r in store.returns_between(sessions[0].isoformat(), as_of.isoformat())],
+        columns=["ticker", "date", *RETURN_TYPES],
+    )
+    rows: list[RollingRow] = []
+    if ws.empty or rets.empty:
+        store.replace_rolling(as_of.isoformat(), [])
+        return rows
+    ws = ws[ws["ticker"].isin(universe)].copy()
+    ws["s"] = ws["date"].map(index)
+    rets["s"] = rets["date"].map(index)
+    ws = ws.dropna(subset=["s"])
+    rets = rets.dropna(subset=["s"])
+
+    for months in HORIZONS:
+        horizon_start = months_before(as_of, months).isoformat()
+        w_all = ws[ws["date"] >= horizon_start]
+        for window in WINDOWS_ALL:
+            w = w_all[w_all["window"] == window]
+            if w.empty:
+                continue
+            for lag in LAGS:
+                # the return at session s + lag pairs with sentiment at session s
+                r = rets.assign(s=rets["s"] - lag)
+                merged = w.merge(r, on=["ticker", "s"], suffixes=("", "_r"))
+                if merged.empty:
+                    continue
+                for return_type in RETURN_TYPES:
+                    x = merged["mean_score"].tolist()
+                    y = merged[return_type].tolist()
+                    if len(x) >= MIN_POOLED:
+                        for method, est, p, lo, hi in correlate_xy(x, y):
+                            rows.append(
+                                RollingRow(
+                                    months,
+                                    window,
+                                    return_type,
+                                    lag,
+                                    "pooled",
+                                    POOLED,
+                                    method,
+                                    len(x),
+                                    est,
+                                    p,
+                                    lo,
+                                    hi,
+                                )
+                            )
+                    for ticker, grp in merged.groupby("ticker"):
+                        if len(grp) < MIN_TICKER:
+                            continue
+                        for method, est, p, lo, hi in correlate_xy(
+                            grp["mean_score"].tolist(), grp[return_type].tolist()
+                        ):
+                            rows.append(
+                                RollingRow(
+                                    months,
+                                    window,
+                                    return_type,
+                                    lag,
+                                    "ticker",
+                                    str(ticker),
+                                    method,
+                                    len(grp),
+                                    est,
+                                    p,
+                                    lo,
+                                    hi,
+                                )
+                            )
+    computed_at = utc_now_iso()
+    store.replace_rolling(
+        as_of.isoformat(),
+        (
+            (
+                r.months,
+                r.window,
+                r.return_type,
+                r.lag,
+                r.scope,
+                r.ticker,
+                r.method,
+                r.n,
+                r.estimate,
+                r.p_value,
+                r.ci_low,
+                r.ci_high,
+                computed_at,
+            )
+            for r in rows
+        ),
+    )
+    log.info("rolling as of %s: %d rows", as_of, len(rows))
+    return rows

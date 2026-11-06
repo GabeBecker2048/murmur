@@ -180,3 +180,34 @@ def test_cascade_delete_removes_links(store):
 def test_count_rejects_unknown_table(store):
     with pytest.raises(ValueError):
         store.count("sqlite_master")
+
+
+def test_rolling_rows_and_ranges(store):
+    store.upsert_returns([("AAPL", "2026-11-04", "2026-11-03", 1, 1, 1, 0.1, 0.2, 0.3)])
+    store.upsert_returns([("AAPL", "2026-11-05", "2026-11-04", 1, 1, 1, 0.1, 0.2, 0.3)])
+    assert [r["date"] for r in store.returns_between("2026-11-05", "2026-11-30")] == ["2026-11-05"]
+    assert store.days_with_returns() == ["2026-11-04", "2026-11-05"]
+    store.upsert_window_sentiment("2026-11-05", "day", "m", {"AAPL": (2, 0.4)})
+    assert len(store.window_sentiment_between("2026-11-01", "2026-11-05", "m")) == 1
+    assert store.window_sentiment_between("2026-11-01", "2026-11-05", "other") == []
+    n = store.replace_rolling(
+        "2026-11-05",
+        [(3, "day", "daily", 1, "pooled", "", "pearson", 40, 0.5, 0.01, 0.2, 0.7, "t")],
+    )
+    assert n == 1 and store.rolling_on("2026-11-05")[0]["lag"] == 1
+    store.replace_rolling("2026-11-05", [])
+    assert store.rolling_on("2026-11-05") == []
+
+
+def test_migrates_a_version_3_store(tmp_path):
+    import sqlite3
+
+    from murmur.store import MIGRATIONS
+
+    path = tmp_path / "v3.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(MIGRATIONS[1] + MIGRATIONS[2] + MIGRATIONS[3] + "PRAGMA user_version = 3;")
+    conn.close()
+    with Store(path) as s:
+        assert s.schema_version == SCHEMA_VERSION
+        assert s.count("rolling_correlations") == 0

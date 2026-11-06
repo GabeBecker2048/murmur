@@ -39,7 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--rebuild", action="store_true", help="recompute the month even if cached")
     add("news", "fetch and store headlines for the universe")
     add("prices", "fetch and store daily bars for the universe")
-    add("analyze", "score pending headlines, then compute the day's sentiment and correlations")
+    a = add("analyze", "score pending headlines, then compute the day's sentiment and correlations")
+    a.add_argument(
+        "--all",
+        action="store_true",
+        help="recompute every day with returns (after a schema change)",
+    )
     e = add("export", "write the day's published files")
     e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
     add("schedule", "run the daily job forever (the container's main process)", dated=False)
@@ -115,12 +120,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(pipeline.run_prices(store, config, day))
         elif args.command == "analyze":
             print(pipeline.run_sentiment(store, config))
+            if args.all:
+                days = pipeline.analyze_all(store, config)
+                print(
+                    f"re-analysed {len(days)} days"
+                    + (f" ({days[0]} to {days[-1]})" if days else "")
+                )
+                return 0
             result = pipeline.run_analyze(store, config, day)
             print(pipeline.describe_analyze(result))
-            for c in result.today.correlations:
+            for c in sorted(
+                result.today.correlations, key=lambda c: (c.window, c.return_type, c.lag, c.method)
+            ):
                 ci = f" [{c.ci_low:+.3f}, {c.ci_high:+.3f}]" if c.ci_low is not None else ""
                 print(
-                    f"  {c.window:<9} {c.return_type:<9} {c.method:<8} "
+                    f"  {c.window:<9} {c.return_type:<9} lag {c.lag:+d} {c.method:<8} "
                     f"{c.estimate:+.3f}{ci}  p={c.p_value:.3f}  n={c.n}"
                 )
         elif args.command == "export":
