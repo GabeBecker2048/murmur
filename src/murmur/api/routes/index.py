@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from murmur.api.deps import get_config, get_store
 from murmur.clock import first_trading_day, parse_date
 from murmur.config import Config
+from murmur.publish import public
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -59,7 +60,7 @@ def constituents(
         "covered": len(members)
         if config.universe.source == "static"
         else min(len(members), config.universe.size),
-        "items": [m.__dict__ for m in members],
+        "items": public([m.__dict__ for m in members]),
     }
 
 
@@ -98,4 +99,4 @@ def history(
     rows = store.ticker_history(key.upper())
     if not rows:
         raise HTTPException(404, f"{key} has never been in {name}")
-    return {"name": name, "key": key.upper(), "items": [dict(r) for r in rows]}
+    return {"name": name, "key": key.upper(), "items": public([dict(r) for r in rows])}

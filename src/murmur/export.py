@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -36,6 +36,7 @@ from pathlib import Path
 from murmur import __version__
 from murmur.clock import DAY, first_trading_day, month_key, today_in, utc_now_iso
 from murmur.config import Config
+from murmur.publish import cc_by, cc_by_scored, file_metadata, round_cap, round_weight, source_terms
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -43,18 +44,6 @@ log = logging.getLogger(__name__)
 
 DAILY = "daily"
 MONTHLY = "monthly"
-
-CC_BY = {
-    "name": "CC BY 4.0",
-    "url": "https://creativecommons.org/licenses/by/4.0/",
-    "attribution": "Murmur (github.com/GabeBecker2048/murmur)",
-}
-CC_BY_NC_SA = {
-    "name": "CC BY-NC-SA 4.0",
-    "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-    "attribution": "Murmur (github.com/GabeBecker2048/murmur); scores by ProsusAI/finbert",
-    "note": "Scores come from FinBERT, which is licensed CC BY-NC-SA 4.0.",
-}
 
 
 @dataclass(frozen=True)
@@ -130,8 +119,8 @@ def q_constituents(store: Store, config: Config, month: str) -> list[tuple]:
             m.ticker,
             m.name,
             m.exchange,
-            int(m.market_cap) if m.market_cap is not None else None,
-            m.weight,
+            round_cap(m.market_cap),
+            round_weight(m.weight),
             reconstructed,
         )
         for m in members
@@ -299,6 +288,8 @@ def datasets(config: Config) -> list[Dataset]:
     """The published datasets, in manifest order. The index dataset is named after
     ``config.index.name``."""
     index = config.index
+    contact = config.datasets.contact
+    CC_BY, CC_BY_SCORED, SOURCE_TERMS = cc_by(contact), cc_by_scored(contact), source_terms(contact)
     return [
         Dataset(
             "companies",
@@ -337,7 +328,7 @@ def datasets(config: Config) -> list[Dataset]:
             "prev_close is split-adjusted when split_ratio is set.",
             DAILY,
             (Table("prices", PRICES_COLUMNS, ("ticker", "date"), q_prices),),
-            CC_BY,
+            SOURCE_TERMS,
         ),
         Dataset(
             "news",
@@ -347,7 +338,7 @@ def datasets(config: Config) -> list[Dataset]:
             "assigned to, and the sentiment scores where the headline has been scored.",
             DAILY,
             (Table("articles", ARTICLES_COLUMNS, ("article_id", "ticker"), q_articles),),
-            CC_BY_NC_SA,
+            CC_BY_SCORED,
         ),
         Dataset(
             "sentiment",
@@ -364,7 +355,7 @@ def datasets(config: Config) -> list[Dataset]:
                     q_sentiment,
                 ),
             ),
-            CC_BY_NC_SA,
+            CC_BY_SCORED,
         ),
         Dataset(
             "correlations",
@@ -428,18 +419,48 @@ def month_path(base: Path, ds: str, month: str, table: str) -> Path:
     return month_dir(base, ds, month) / f"{month.replace('-', '')}.{table}.parquet"
 
 
-def _write_parquet(path: Path, columns: Sequence[str], rows: list[tuple]) -> int:
+def _write_parquet(
+    path: Path, columns: Sequence[str], rows: list[tuple], meta: Mapping[str, str] | None = None
+) -> int:
     import pandas as pd
 
     path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(rows, columns=list(columns))
-    df.to_parquet(path, index=False, engine="pyarrow")
+    _write_frame(path, df, meta)
     return len(df)
 
 
-def _write_or_remove(path: Path, table: Table, rows: list[tuple], written: list[Path]) -> None:
+def _write_frame(path: Path, df, meta: Mapping[str, str] | None) -> None:
+    """Write a DataFrame as Parquet with the license/provenance metadata in the footer."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    if meta:
+        existing = table.schema.metadata or {}
+        table = table.replace_schema_metadata(
+            {**existing, **{k.encode(): v.encode() for k, v in meta.items()}}
+        )
+    pq.write_table(table, path)
+
+
+def read_metadata(path: Path) -> dict[str, str]:
+    """The Murmur keys stamped into a Parquet footer (empty for a foreign file)."""
+    import pyarrow.parquet as pq
+
+    raw = pq.read_schema(path).metadata or {}
+    return {k.decode(): v.decode() for k, v in raw.items() if not k.startswith(b"pandas")}
+
+
+def _meta(ds: Dataset, table: Table, cadence_key: str) -> dict[str, str]:
+    return file_metadata(ds.name, table.name, ds.license, {"murmur_period": cadence_key})
+
+
+def _write_or_remove(
+    path: Path, table: Table, rows: list[tuple], written: list[Path], meta: Mapping[str, str]
+) -> None:
     if rows:
-        _write_parquet(path, table.columns, rows)
+        _write_parquet(path, table.columns, rows, meta)
         written.append(path)
     else:
         path.unlink(missing_ok=True)
@@ -469,7 +490,13 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
             continue
         for table in ds.tables:
             rows = table.query(store, config, iso)
-            _write_or_remove(day_path(base, ds.name, day, table.name), table, rows, written)
+            _write_or_remove(
+                day_path(base, ds.name, day, table.name),
+                table,
+                rows,
+                written,
+                _meta(ds, table, iso),
+            )
         if ds.charts:
             written += _charts(store, config, base, ds.name, day)
 
@@ -489,7 +516,13 @@ def export_month(store: Store, config: Config, month: str) -> list[Path]:
             continue
         for table in ds.tables:
             rows = table.query(store, config, month)
-            _write_or_remove(month_path(base, ds.name, month, table.name), table, rows, written)
+            _write_or_remove(
+                month_path(base, ds.name, month, table.name),
+                table,
+                rows,
+                written,
+                _meta(ds, table, month),
+            )
     return written
 
 
@@ -589,19 +622,20 @@ def compact_finished_months(base: Path, config: Config, current_month: str) -> l
             if month >= current_month or not any(p.is_dir() for p in mdir.iterdir()):
                 continue
             for table in ds.tables:
-                out = compact_month(base, ds.name, table, month)
+                out = compact_month(base, ds, table, month)
                 if out:
                     written.append(out)
     return written
 
 
-def compact_month(base: Path, ds: str, table: Table, month: str) -> Path | None:
+def compact_month(base: Path, ds: Dataset | str, table: Table, month: str) -> Path | None:
     """Merge a month's ``DD/YYYYMMDD.<table>.parquet`` files (and an existing month
     file) into ``YYYYMM.<table>.parquet``, deduplicated by the table's key."""
     import pandas as pd
 
-    mdir = month_dir(base, ds, month)
-    month_file = month_path(base, ds, month, table.name)
+    name = ds if isinstance(ds, str) else ds.name
+    mdir = month_dir(base, name, month)
+    month_file = month_path(base, name, month, table.name)
     daily = sorted(p for p in mdir.glob(f"*/*.{table.name}.parquet") if p.parent.is_dir())
     if not daily:
         return None
@@ -611,7 +645,8 @@ def compact_month(base: Path, ds: str, table: Table, month: str) -> Path | None:
     df = pd.concat(frames, ignore_index=True)
     key = list(table.key)
     df = df.drop_duplicates(subset=key, keep="last").sort_values(key)
-    df.to_parquet(month_file, index=False, engine="pyarrow")
+    meta = None if isinstance(ds, str) else _meta(ds, table, month)
+    _write_frame(month_file, df, meta)
     for p in daily:
         p.unlink()
         _prune(p.parent)
@@ -709,6 +744,11 @@ def manifest(base: Path, config: Config) -> dict:
     return {
         "murmur_version": __version__,
         "generated_at": utc_now_iso(),
+        "licensing": (
+            "Each dataset carries its own license block; the same text is stamped into every "
+            "Parquet footer (keys license, license_url, attribution, notice, contact) and sent "
+            "as Link/X-Murmur-* headers on /data responses."
+        ),
         "layout": {
             "daily": "{dataset}/{YYYY}/{MM}/{DD}/{YYYYMMDD}.{table}.parquet",
             "monthly": "{dataset}/{YYYY}/{MM}/{YYYYMM}.{table}.parquet",

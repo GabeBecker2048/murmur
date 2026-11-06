@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from murmur.api.deps import get_store
+from murmur.publish import public
 from murmur.store import Store
 
 router = APIRouter(tags=["companies"])
@@ -32,4 +33,4 @@ def get_company(key: str, store: Store = Depends(get_store)):
     )
     if match is None:
         raise HTTPException(404, f"no company {key!r}")
-    return {**dict(match), "history": [dict(r) for r in store.ticker_history(key)]}
+    return {**dict(match), "history": public([dict(r) for r in store.ticker_history(key)])}

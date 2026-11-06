@@ -150,8 +150,10 @@ class UiConfig:
 @dataclass(frozen=True)
 class DatasetsConfig:
     private: tuple[str, ...]
-    """Datasets whose files `/data` refuses without the API token (e.g. ``prices`` until the
-    source's terms allow publishing). They stay in the manifest, flagged ``public: false``."""
+    """Datasets whose files `/data` refuses without the API token. They stay in the manifest,
+    flagged ``public: false``."""
+    contact: str
+    """Takedown / questions address printed in every license notice (default: sec.contact)."""
 
 
 @dataclass(frozen=True)
@@ -334,6 +336,9 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
         if isinstance(private, str):
             private = [private]
         private = tuple(str(x) for x in private)
+        contact = str(
+            raw.get("datasets", {}).get("contact", "") or raw.get("sec", {}).get("contact", "")
+        )
         api = raw.get("api", {})
         cors = api.get("cors_origins", ())
         if isinstance(cors, str):
@@ -402,7 +407,7 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 default_method=str(ui.get("default_method", "pearson")),
                 theme=str(ui.get("theme", "auto")),
             ),
-            datasets=DatasetsConfig(private=private),
+            datasets=DatasetsConfig(private=private, contact=contact),
             source_path=user_path,
             raw=raw,
             provenance=provenance,
@@ -570,6 +575,11 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "choice",
         "choices": list(THEMES),
         "help": "Default theme; visitors can switch.",
+    },
+    {
+        "path": "datasets.contact",
+        "type": "string",
+        "help": "Contact printed in every license notice (takedown requests); default sec.contact.",
     },
     {
         "path": "datasets.private",

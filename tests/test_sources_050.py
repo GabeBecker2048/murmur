@@ -117,3 +117,24 @@ def test_finnhub_retries_once_on_429(monkeypatch):
     src = fh.FinnhubNews("k", sleep=slept.append)
     out = src.fetch_range("AAPL", date(2026, 11, 1), date(2026, 11, 5))
     assert len(out) == 1 and calls["n"] == 2 and slept == [fh.RETRY_WAIT]
+
+
+def test_finnhub_retries_transient_network_errors(monkeypatch):
+    import urllib.error
+    from datetime import date
+
+    from murmur.sources import finnhub as fh
+
+    calls = {"n": 0}
+
+    def fake_get(url, params):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("_ssl.c:1001: The handshake operation timed out")
+        return []
+
+    slept = []
+    monkeypatch.setattr(fh, "get_json", fake_get)
+    src = fh.FinnhubNews("k", sleep=slept.append)
+    assert src.fetch_range("MS", date(2025, 12, 1), date(2025, 12, 31)) == []
+    assert calls["n"] == 2 and slept == [fh.NET_WAIT]

@@ -5,6 +5,7 @@ scheduler tick) and the routers."""
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from contextlib import asynccontextmanager
 from io import BytesIO
@@ -71,6 +72,22 @@ class PublishedFiles(StaticFiles):
             return self._csv_response(path)
         return await super().get_response(path, scope)
 
+    def _license_headers(self, path: str) -> dict[str, str]:
+        if self.provider is None:
+            return {}
+        from murmur.export import dataset
+
+        ds = dataset(self.provider.get(), path.split("/", 1)[0])
+        if ds is None:
+            return {}
+        lic = ds.license
+        return {
+            "Link": f'<{lic["url"]}>; rel="license"',
+            "X-Murmur-License": lic["name"],
+            "X-Murmur-Attribution": lic["attribution"],
+            "X-Murmur-Contact": lic.get("contact", ""),
+        }
+
     def _has_token(self, scope) -> bool:
         import hmac
 
@@ -103,16 +120,24 @@ class PublishedFiles(StaticFiles):
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Cache-Control": "public, max-age=300",
+                **self._license_headers(path),
             },
         )
 
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
-        path = str(args[0]) if args else ""
-        if path.endswith("index.json"):
+        full = str(args[0]) if args else ""  # Starlette passes the filesystem path
+        try:
+            rel = os.path.relpath(full, self.directory)
+        except ValueError:
+            rel = full
+        if rel.endswith("index.json"):
             response.headers["Cache-Control"] = "no-cache"
         else:
             response.headers["Cache-Control"] = "public, max-age=300"
+            for k, v in self._license_headers(rel).items():
+                if v:
+                    response.headers[k] = v
         return response
 
 

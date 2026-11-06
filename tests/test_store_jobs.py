@@ -108,8 +108,8 @@ def seed_day(store, model="m"):
     store.save_universe_month(
         "2026-11",
         [
-            UniverseMember("AAPL", "Apple", 5e12, 1, 320193),
-            UniverseMember("MSFT", "Microsoft", 4e12, 2, 789019),
+            UniverseMember("AAPL", "Apple", 5e12, 1, 320193, weight=5 / 9),
+            UniverseMember("MSFT", "Microsoft", 4e12, 2, 789019, weight=4 / 9),
         ],
         "t",
     )
