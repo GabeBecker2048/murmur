@@ -51,10 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     e = add("export", "write the day's published files")
     e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
-    add("schedule", "run the daily job forever (the container's main process)", dated=False)
+    add("serve", "HTTP API + scheduler + job worker (the container's main process)", dated=False)
+    add("schedule", "the scheduler alone, no HTTP (fallback)", dated=False)
     r = add("runs", "list recent runs", dated=False)
     r.add_argument("--limit", type=int, default=20)
-    add("health", "exit 0 if the scheduler's heartbeat is fresh", dated=False)
+    h = add("health", "exit 0 if the running server reports healthy", dated=False)
+    h.add_argument("--file", action="store_true", help="check the heartbeat file instead of HTTP")
     return parser
 
 
@@ -85,12 +87,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.debug("config from %s, data_dir %s", config.source_path or "defaults", config.data_dir)
 
     if args.command == "health":
-        from murmur.scheduler import heartbeat_age_seconds
+        if args.file:
+            from murmur.scheduler import heartbeat_age_seconds
 
-        age = heartbeat_age_seconds(config)
-        fresh = age is not None and age < HEALTH_MAX_AGE
-        print(f"heartbeat {'fresh' if fresh else 'stale or missing'} ({age and round(age)}s)")
-        return 0 if fresh else 1
+            age = heartbeat_age_seconds(config)
+            fresh = age is not None and age < HEALTH_MAX_AGE
+            print(f"heartbeat {'fresh' if fresh else 'stale or missing'} ({age and round(age)}s)")
+            return 0 if fresh else 1
+        return health_http(config)
+    if args.command == "serve":
+        return serve_http(args.config)
     if args.command == "schedule":
         from murmur.scheduler import serve
 
@@ -166,6 +172,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{r['id']:4d} {r['date']} {r['trigger']:<8} #{r['attempt']} "
                     f"{r['started_at']} -> {r['finished_at'] or '…'}  {status}"
                 )
+    return 0
+
+
+def health_http(config) -> int:
+    """GET /api/v1/health on the configured port; the Docker HEALTHCHECK."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    host = "127.0.0.1" if config.api.host in ("0.0.0.0", "") else config.api.host
+    url = f"http://{host}:{config.api.port}/api/v1/health"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+            body = _json.loads(resp.read())
+        print(f"healthy: murmur {body.get('version')}")
+        return 0
+    except urllib.error.HTTPError as e:
+        print(f"unhealthy: HTTP {e.code} {e.read().decode('utf-8', 'replace')[:200]}")
+        return 1
+    except (urllib.error.URLError, OSError) as e:
+        print(f"unreachable: {e}")
+        return 1
+
+
+def serve_http(config_path: str | None) -> int:
+    import uvicorn
+
+    from murmur.api.app import create_app
+    from murmur.config import ConfigProvider
+
+    provider = ConfigProvider(config_path)
+    config = provider.get()
+    app = create_app(provider)
+    uvicorn.run(app, host=config.api.host, port=config.api.port, log_level="info", access_log=False)
     return 0
 
 

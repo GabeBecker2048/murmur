@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+from murmur import jobs as jobctl
 from murmur.analysis import DayResult, analyze_day, returns_available, rolling_analysis
 from murmur.clock import is_trading_day, previous_session, utc_now_iso
 from murmur.config import Config
@@ -114,7 +115,8 @@ def _ingest(store: Store, sources: list[NewsSource], tickers: list[str], fetch: 
     dead = []
     for source in sources:
         new = linked = failed = 0
-        for ticker in tickers:
+        for i, ticker in enumerate(tickers):
+            jobctl.report("news", i, len(tickers), f"{source.name} {ticker}")
             try:
                 articles = fetch(source, ticker)
             except Exception:
@@ -176,6 +178,7 @@ def backfill_news(
     def fetch(source, ticker):
         out = []
         for a, b in chunks:
+            jobctl.check()
             out += source.fetch_range(ticker, a, b)
         return out
 
@@ -281,7 +284,8 @@ def analyze_all(store: Store, config: Config) -> list[date]:
     """Recompute the daily analysis for every day with returns, oldest first,
     then the rolling analysis as of the last one. For after a schema change."""
     days = [date.fromisoformat(d) for d in store.days_with_returns()]
-    for d in days:
+    for i, d in enumerate(days):
+        jobctl.report("analyze", i, len(days), d.isoformat())
         members, _ = membership_for(store, config, d)
         analyze_day(store, config, d, [m.ticker for m in members])
     if days:
@@ -299,7 +303,9 @@ def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -
 def export_all(store: Store, config: Config) -> list[Path]:
     """Rebuild the whole published tree from the store (every known day)."""
     written = []
-    for iso in store.known_days():
+    days = store.known_days()
+    for i, iso in enumerate(days):
+        jobctl.report("export", i, len(days), iso)
         written += export_day(store, config, date.fromisoformat(iso))
     return written
 
@@ -309,6 +315,7 @@ def export_all(store: Store, config: Config) -> list[Path]:
 
 def _stage(name: str, fn: Callable[[], object], describe: Callable[[object], str]) -> StageResult:
     started = time.perf_counter()
+    jobctl.report(name)
     log.info("%s: starting", name)
     try:
         result = fn()

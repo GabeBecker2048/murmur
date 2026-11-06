@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -245,7 +245,33 @@ MIGRATIONS: dict[int, str] = {
     DROP TABLE rolling_correlations;
     ALTER TABLE rolling_correlations_v5 RENAME TO rolling_correlations;
     """,
+    6: """
+    CREATE TABLE jobs (
+        id          INTEGER PRIMARY KEY,
+        type        TEXT NOT NULL,
+        params      TEXT NOT NULL,
+        day         TEXT,
+        trigger     TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        priority    INTEGER NOT NULL DEFAULT 0,
+        not_before  TEXT,
+        attempt     INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL,
+        started_at  TEXT,
+        finished_at TEXT,
+        progress    TEXT,
+        result      TEXT,
+        error       TEXT,
+        run_id      INTEGER,
+        log         TEXT
+    );
+    CREATE INDEX idx_jobs_status ON jobs (status, not_before, priority, id);
+    CREATE INDEX idx_jobs_day ON jobs (type, day);
+    """,
 }
+
+JOB_ACTIVE = ("queued", "running", "cancelling")
+JOB_FINAL = ("done", "failed", "cancelled", "interrupted")
 
 DEDUP_WINDOW_DAYS = 2
 """Two articles with the same normalized title published within this many days
@@ -257,16 +283,43 @@ def _member(r: sqlite3.Row) -> UniverseMember:
 
 
 class Store:
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        check_same_thread: bool = True,
+        timeout: float = 30.0,
+        migrate: bool = True,
+    ):
         self.path = Path(path) if path != ":memory:" else None
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path), isolation_level=None)
+        self.conn = sqlite3.connect(
+            str(path), isolation_level=None, check_same_thread=check_same_thread, timeout=timeout
+        )
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if self.path is not None:
-            self.conn.execute("PRAGMA journal_mode = WAL")
-        self._migrate()
+            self._ensure_wal()
+        if migrate:
+            self._migrate()
+
+    def _ensure_wal(self) -> None:
+        """Switch a new file to WAL once. Changing the journal mode needs exclusive
+        access, so a connection racing another on a brand-new file retries briefly."""
+        import time
+
+        for attempt in range(50):
+            try:
+                mode = self.conn.execute("PRAGMA journal_mode").fetchone()[0]
+                if str(mode).lower() == "wal":
+                    return
+                self.conn.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or attempt == 49:
+                    raise
+                time.sleep(0.05)
 
     def __enter__(self) -> Store:
         return self
@@ -517,6 +570,7 @@ class Store:
             "correlations",
             "rolling_correlations",
             "runs",
+            "jobs",
         }:
             raise ValueError(table)
         return self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -784,3 +838,463 @@ class Store:
                ORDER BY window, return_type, lag, scope, source, method""",
             (date,),
         ).fetchall()
+
+    def table_counts(self) -> dict[str, int]:
+        return {
+            t: self.count(t)
+            for t in (
+                "articles",
+                "article_sources",
+                "prices",
+                "returns",
+                "sentiment",
+                "window_sentiment",
+                "correlations",
+                "rolling_correlations",
+                "universe_months",
+                "runs",
+                "jobs",
+            )
+        }
+
+    # -- jobs -----------------------------------------------------------------
+
+    def create_job(
+        self,
+        type_: str,
+        params: dict,
+        trigger: str,
+        created_at: str,
+        *,
+        day: str | None = None,
+        priority: int = 0,
+        not_before: str | None = None,
+        attempt: int = 1,
+    ) -> int:
+        import json
+
+        with self.conn:
+            self.conn.execute("BEGIN")
+            cur = self.conn.execute(
+                """INSERT INTO jobs (type, params, day, trigger, status, priority, not_before,
+                                     attempt, created_at)
+                   VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)""",
+                (
+                    type_,
+                    json.dumps(params, sort_keys=True),
+                    day,
+                    trigger,
+                    priority,
+                    not_before,
+                    attempt,
+                    created_at,
+                ),
+            )
+            return cur.lastrowid
+
+    def queued_duplicate(self, type_: str, params: dict) -> int | None:
+        import json
+
+        row = self.conn.execute(
+            "SELECT id FROM jobs WHERE type = ? AND params = ? AND status IN ('queued', 'running')",
+            (type_, json.dumps(params, sort_keys=True)),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def next_job(self, now: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            """SELECT * FROM jobs
+               WHERE status = 'queued' AND (not_before IS NULL OR not_before <= ?)
+               ORDER BY priority, id LIMIT 1""",
+            (now,),
+        ).fetchone()
+
+    def next_queued(self) -> sqlite3.Row | None:
+        """The earliest queued job regardless of ``not_before`` (for 'next run' displays)."""
+        return self.conn.execute(
+            "SELECT * FROM jobs WHERE status = 'queued' ORDER BY not_before, priority, id LIMIT 1"
+        ).fetchone()
+
+    def start_job(self, job_id: int, started_at: str) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute(
+                "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
+                (started_at, job_id),
+            )
+
+    def update_job(
+        self, job_id: int, *, progress: str | None = None, log: str | None = None
+    ) -> None:
+        sets, vals = [], []
+        if progress is not None:
+            sets.append("progress = ?")
+            vals.append(progress)
+        if log is not None:
+            sets.append("log = ?")
+            vals.append(log)
+        if not sets:
+            return
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", (*vals, job_id))
+
+    def finish_job(
+        self,
+        job_id: int,
+        status: str,
+        finished_at: str,
+        *,
+        result: str | None = None,
+        error: str | None = None,
+        log: str | None = None,
+        run_id: int | None = None,
+    ) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute(
+                """UPDATE jobs SET status = ?, finished_at = ?, result = ?, error = ?,
+                                   log = coalesce(?, log), run_id = coalesce(?, run_id)
+                   WHERE id = ?""",
+                (status, finished_at, result, error, log, run_id, job_id),
+            )
+
+    def request_cancel(self, job_id: int, now: str) -> str | None:
+        """Cancel a queued job outright or ask a running one to stop. Returns the new
+        status, or None if the job does not exist or is already finished."""
+        row = self.job(job_id)
+        if row is None or row["status"] not in ("queued", "running"):
+            return None
+        new = "cancelled" if row["status"] == "queued" else "cancelling"
+        with self.conn:
+            self.conn.execute("BEGIN")
+            if new == "cancelled":
+                self.conn.execute(
+                    "UPDATE jobs SET status = 'cancelled', finished_at = ? WHERE id = ?",
+                    (now, job_id),
+                )
+            else:
+                self.conn.execute("UPDATE jobs SET status = 'cancelling' WHERE id = ?", (job_id,))
+        return new
+
+    def job_status(self, job_id: int) -> str | None:
+        row = self.conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return row["status"] if row else None
+
+    def job(self, job_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    def jobs(
+        self, status: str | None = None, limit: int = 50, offset: int = 0
+    ) -> tuple[list[sqlite3.Row], int]:
+        where, params = "", ()
+        if status:
+            where, params = "WHERE status = ?", (status,)
+        total = self.conn.execute(f"SELECT count(*) FROM jobs {where}", params).fetchone()[0]
+        rows = self.conn.execute(
+            f"""SELECT id, type, params, day, trigger, status, priority, not_before, attempt,
+                       created_at, started_at, finished_at, progress, result, error, run_id
+                FROM jobs {where} ORDER BY id DESC LIMIT ? OFFSET ?""",
+            (*params, limit, offset),
+        ).fetchall()
+        return rows, total
+
+    def mark_interrupted(self, now: str, before: str | None = None) -> int:
+        """On boot: running/cancelling jobs became ``interrupted``; jobs queued before
+        ``before`` (the boot time) are dropped. Jobs queued since boot are kept."""
+        before = before or now
+        with self.conn:
+            self.conn.execute("BEGIN")
+            n = self.conn.execute(
+                """UPDATE jobs SET status = 'interrupted', finished_at = ?,
+                                   error = 'process stopped while the job was running'
+                   WHERE status IN ('running', 'cancelling') AND started_at < ?""",
+                (now, before),
+            ).rowcount
+            self.conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?,
+                                   error = 'dropped on restart'
+                   WHERE status = 'queued' AND created_at < ?""",
+                (now, before),
+            )
+        return n
+
+    def run_jobs_for_day(self, day: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, status, attempt FROM jobs WHERE type = 'run' AND day = ? ORDER BY id",
+            (day,),
+        ).fetchall()
+
+    # -- API read queries -----------------------------------------------------
+
+    def last_run(self) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+
+    def run(self, run_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+
+    def latest_analysis_day(self) -> str | None:
+        row = self.conn.execute("SELECT max(date) FROM correlations").fetchone()
+        return row[0]
+
+    def latest_rolling_as_of(self) -> str | None:
+        return self.conn.execute("SELECT max(as_of) FROM rolling_correlations").fetchone()[0]
+
+    def days_summary(self, start: str, end: str) -> list[sqlite3.Row]:
+        """Per date in ``[start, end]`` that has any data: price bars, articles (by trading
+        day), returns and correlation rows."""
+        return self.conn.execute(
+            """SELECT d.date,
+                      (SELECT count(*) FROM prices p WHERE p.date = d.date) AS n_prices,
+                      (SELECT count(*) FROM articles a WHERE a.trading_day = d.date) AS n_articles,
+                      (SELECT count(*) FROM returns r WHERE r.date = d.date) AS n_returns,
+                      (SELECT count(*) FROM correlations c WHERE c.date = d.date) AS n_correlations
+               FROM (SELECT date FROM prices
+                     UNION SELECT trading_day FROM articles WHERE trading_day IS NOT NULL
+                     UNION SELECT date FROM correlations) d
+               WHERE d.date >= ? AND d.date <= ? ORDER BY d.date""",
+            (start, end),
+        ).fetchall()
+
+    def correlations_between(
+        self, start: str, end: str, filters: dict[str, object] | None = None
+    ) -> list[sqlite3.Row]:
+        where = ["date >= ?", "date <= ?"]
+        params: list[object] = [start, end]
+        for key, value in (filters or {}).items():
+            if value is not None:
+                where.append(f"{key} = ?")
+                params.append(value)
+        return self.conn.execute(
+            f"""SELECT date, window, return_type, lag, scope, source, method, model, n, estimate,
+                       p_value, ci_low, ci_high
+                FROM correlations WHERE {" AND ".join(where)}
+                ORDER BY date, window, return_type, lag, source, method""",
+            params,
+        ).fetchall()
+
+    def rolling_rows(
+        self, as_of: str, filters: dict[str, object] | None = None
+    ) -> list[sqlite3.Row]:
+        where = ["as_of = ?"]
+        params: list[object] = [as_of]
+        for key, value in (filters or {}).items():
+            if value is not None:
+                where.append(f"{key} = ?")
+                params.append(value)
+        return self.conn.execute(
+            f"""SELECT as_of, months, window, return_type, lag, source, scope, ticker, method, n,
+                       estimate, p_value, ci_low, ci_high
+                FROM rolling_correlations WHERE {" AND ".join(where)}
+                ORDER BY months, window, return_type, lag, source, scope, ticker, method""",
+            params,
+        ).fetchall()
+
+    def rolling_history(self, filters: dict[str, object]) -> list[sqlite3.Row]:
+        where, params = [], []
+        for key, value in filters.items():
+            where.append(f"{key} = ?")
+            params.append(value)
+        return self.conn.execute(
+            f"""SELECT as_of, n, estimate, p_value, ci_low, ci_high
+                FROM rolling_correlations WHERE {" AND ".join(where)} ORDER BY as_of""",
+            params,
+        ).fetchall()
+
+    def ticker_series(self, ticker: str, start: str, end: str) -> list[sqlite3.Row]:
+        """Per day: the bar, the returns and the pooled window sentiment."""
+        return self.conn.execute(
+            """SELECT p.date, p.open, p.high, p.low, p.close, p.volume,
+                      r.overnight, r.intraday, r.daily,
+                      (SELECT mean_score FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'overnight' AND w.source = 'all')
+                        AS overnight_sentiment,
+                      (SELECT n_articles FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'overnight' AND w.source = 'all')
+                        AS overnight_n,
+                      (SELECT mean_score FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'intraday' AND w.source = 'all')
+                        AS intraday_sentiment,
+                      (SELECT n_articles FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'intraday' AND w.source = 'all')
+                        AS intraday_n,
+                      (SELECT mean_score FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'day' AND w.source = 'all')
+                        AS day_sentiment,
+                      (SELECT n_articles FROM window_sentiment w WHERE w.date = p.date
+                         AND w.ticker = p.ticker AND w.window = 'day' AND w.source = 'all')
+                        AS day_n
+               FROM prices p
+               LEFT JOIN returns r ON r.ticker = p.ticker AND r.date = p.date
+               WHERE p.ticker = ? AND p.date >= ? AND p.date <= ?
+               ORDER BY p.date""",
+            (ticker, start, end),
+        ).fetchall()
+
+    def ticker_info(self, ticker: str) -> dict | None:
+        months = self.conn.execute(
+            """SELECT month, rank, name, market_cap, cik FROM universe_months
+               WHERE ticker = ? ORDER BY month""",
+            (ticker,),
+        ).fetchall()
+        if not months:
+            return None
+        counts = self.conn.execute(
+            """SELECT (SELECT count(*) FROM article_tickers WHERE ticker = ?) AS n_articles,
+                      (SELECT count(*) FROM prices WHERE ticker = ?) AS n_prices,
+                      (SELECT min(date) FROM prices WHERE ticker = ?) AS first_price,
+                      (SELECT max(date) FROM prices WHERE ticker = ?) AS last_price""",
+            (ticker, ticker, ticker, ticker),
+        ).fetchone()
+        latest = months[-1]
+        return {
+            "ticker": ticker,
+            "name": latest["name"],
+            "cik": latest["cik"],
+            "months": [dict(m) for m in months],
+            "n_articles": counts["n_articles"],
+            "n_prices": counts["n_prices"],
+            "first_price": counts["first_price"],
+            "last_price": counts["last_price"],
+        }
+
+    def tickers_coverage(self, month: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT u.rank, u.ticker, u.name, u.market_cap, u.cik,
+                      (SELECT count(*) FROM article_tickers t JOIN articles a ON a.id = t.article_id
+                        WHERE t.ticker = u.ticker AND a.trading_day LIKE ? || '%') AS n_articles,
+                      (SELECT count(*) FROM prices p WHERE p.ticker = u.ticker
+                        AND p.date LIKE ? || '%') AS n_prices
+               FROM universe_months u WHERE u.month = ? ORDER BY u.rank""",
+            (month, month, month),
+        ).fetchall()
+
+    def articles_query(
+        self,
+        *,
+        ticker: str | None = None,
+        trading_day: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        window: str | None = None,
+        source: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[sqlite3.Row], int]:
+        where, params = [], []
+        if ticker:
+            where.append("a.id IN (SELECT article_id FROM article_tickers WHERE ticker = ?)")
+            params.append(ticker)
+        if trading_day:
+            where.append("a.trading_day = ?")
+            params.append(trading_day)
+        if start:
+            where.append("a.trading_day >= ?")
+            params.append(start)
+        if end:
+            where.append("a.trading_day <= ?")
+            params.append(end)
+        if window:
+            where.append("a.window = ?")
+            params.append(window)
+        if source:
+            where.append("a.id IN (SELECT article_id FROM article_sources WHERE source = ?)")
+            params.append(source)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        total = self.conn.execute(f"SELECT count(*) FROM articles a {clause}", params).fetchone()[0]
+        rows = self.conn.execute(
+            f"""SELECT a.id, a.url, a.title, a.published_at, a.trading_day, a.window, a.provider,
+                       a.first_seen_source,
+                       (SELECT group_concat(ticker, ',') FROM article_tickers
+                         WHERE article_id = a.id) AS tickers,
+                       (SELECT group_concat(source, ',') FROM (
+                          SELECT source FROM article_sources WHERE article_id = a.id
+                          ORDER BY seen_at, rowid)) AS sources,
+                       s.label, s.score, s.positive, s.negative, s.neutral
+                FROM articles a
+                LEFT JOIN sentiment s ON s.article_id = a.id AND s.model = ?
+                {clause}
+                ORDER BY a.published_at DESC, a.id DESC LIMIT ? OFFSET ?""",
+            (model, *params, limit, offset),
+        ).fetchall()
+        return rows, total
+
+    def source_stats(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT s.source,
+                      count(*) AS n_articles,
+                      count(DISTINCT a.trading_day) AS n_days,
+                      min(a.trading_day) AS first_day, max(a.trading_day) AS last_day,
+                      (SELECT count(DISTINCT t.ticker) FROM article_tickers t
+                        WHERE t.article_id IN (SELECT article_id FROM article_sources
+                                               WHERE source = s.source)) AS n_tickers,
+                      (SELECT count(*) FROM article_sources o
+                        WHERE o.source != s.source AND o.article_id IN
+                          (SELECT article_id FROM article_sources WHERE source = s.source))
+                        AS n_shared
+               FROM article_sources s JOIN articles a ON a.id = s.article_id
+               GROUP BY s.source ORDER BY s.source""",
+        ).fetchall()
+
+    def source_series(self, source: str, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT a.trading_day AS date, count(*) AS n_articles,
+                      count(DISTINCT t.ticker) AS n_tickers
+               FROM article_sources s
+               JOIN articles a ON a.id = s.article_id
+               JOIN article_tickers t ON t.article_id = a.id
+               WHERE s.source = ? AND a.trading_day >= ? AND a.trading_day <= ?
+               GROUP BY a.trading_day ORDER BY a.trading_day""",
+            (source, start, end),
+        ).fetchall()
+
+    # -- deletions (destructive jobs) -----------------------------------------
+
+    def delete_analysis(self, date: str) -> dict[str, int]:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            out = {}
+            for table, col in (
+                ("returns", "date"),
+                ("window_sentiment", "date"),
+                ("correlations", "date"),
+                ("rolling_correlations", "as_of"),
+            ):
+                out[table] = self.conn.execute(
+                    f"DELETE FROM {table} WHERE {col} = ?", (date,)
+                ).rowcount
+            return out
+
+    def delete_scores(self, model: str) -> dict[str, int]:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            return {
+                "sentiment": self.conn.execute(
+                    "DELETE FROM sentiment WHERE model = ?", (model,)
+                ).rowcount,
+                "window_sentiment": self.conn.execute(
+                    "DELETE FROM window_sentiment WHERE model = ?", (model,)
+                ).rowcount,
+                "correlations": self.conn.execute(
+                    "DELETE FROM correlations WHERE model = ?", (model,)
+                ).rowcount,
+            }
+
+    def delete_universe_month(self, month: str) -> int:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            n = self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,)).rowcount
+            self.conn.execute("DELETE FROM universe_membership WHERE date LIKE ? || '%'", (month,))
+            return n
+
+    def months_with_data(self) -> list[str]:
+        return [
+            r[0]
+            for r in self.conn.execute(
+                """SELECT DISTINCT substr(date, 1, 7) FROM prices
+                   UNION SELECT DISTINCT substr(trading_day, 1, 7) FROM articles
+                     WHERE trading_day IS NOT NULL
+                   ORDER BY 1"""
+            )
+        ]

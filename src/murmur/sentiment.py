@@ -103,8 +103,11 @@ def score_pending(store: Store, scorer: SentimentScorer) -> int:
         log.info("sentiment: nothing to score for %s", scorer.model_name)
         return 0
     log.info("sentiment: scoring %d headlines with %s", len(pending), scorer.model_name)
+    from murmur import jobs as jobctl
+
     done = 0
     for chunk in _chunks(pending, COMMIT_EVERY):
+        jobctl.report("sentiment", done, len(pending), scorer.model_name)
         scores = scorer.score([title for _, title in chunk])
         if len(scores) != len(chunk):
             raise RuntimeError("scorer returned a different number of results than inputs")

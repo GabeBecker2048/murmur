@@ -216,7 +216,7 @@ def test_cli_run_and_subcommands(cfg, monkeypatch, capsys):
     assert "index.json" in capsys.readouterr().out
     assert cli.main(["-c", str(cfg.source_path), "runs"]) == 0
     assert "manual" in capsys.readouterr().out
-    assert cli.main(["-c", str(cfg.source_path), "health"]) == 1
+    assert cli.main(["-c", str(cfg.source_path), "health", "--file"]) == 1
 
 
 def test_cli_exit_codes(cfg, monkeypatch, capsys):
@@ -231,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.5.1" in capsys.readouterr().out
+    assert "murmur 0.6.0" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):

@@ -1,5 +1,6 @@
-# Murmur daily job. CPU-only torch (the lock pins the PyTorch CPU index on
-# Linux). Runs the scheduler as uid 1000 with /data as the only writable path.
+# Murmur: the API, the daily scheduler and the job worker in one process
+# (`murmur serve`). CPU-only torch (the lock pins the PyTorch CPU index on
+# Linux). Runs as uid 1000 with /data as the only writable path.
 FROM python:3.11-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.4 /uv /uvx /bin/
@@ -30,5 +31,6 @@ RUN useradd --uid 1000 --create-home murmur && mkdir /data && chown murmur:murmu
 USER murmur
 VOLUME /data
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 CMD ["murmur", "health"]
-CMD ["murmur", "schedule"]
+EXPOSE 8100
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 CMD ["murmur", "health"]
+CMD ["murmur", "serve"]

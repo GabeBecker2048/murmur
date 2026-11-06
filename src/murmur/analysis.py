@@ -395,6 +395,9 @@ def rolling_analysis(
         rets["s"] = rets["date"].map(index)
         rets = rets.dropna(subset=["s"])
         for source in sources_for_analysis(store):
+            from murmur import jobs as jobctl
+
+            jobctl.report("rolling", message=f"{as_of} {source}")
             ws = pd.DataFrame(
                 [
                     tuple(r)

@@ -2,4 +2,4 @@ import murmur
 
 
 def test_version():
-    assert murmur.__version__ == "0.5.1"
+    assert murmur.__version__ == "0.6.0"

@@ -234,46 +234,26 @@ def _per_ticker_table(store: Store, iso: str, model: str) -> list[tuple]:
 def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> list[Path]:
     # per_ticker columns: date, source, ticker, window, n_articles, mean_score, overnight,
     # intraday, daily; the charts use the pooled ('all') rows of the day window
-    day_rows = [r[:1] + r[2:] for r in per_ticker if r[3] == DAY and r[1] == "all"]
+    from murmur.api import charts
+
+    day_rows = [r for r in per_ticker if r[3] == DAY and r[1] == "all"]
     if not day_rows:
         return []
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     written = []
     out = day_dir(base, day)
     out.mkdir(parents=True, exist_ok=True)
-    tickers = [r[1] for r in day_rows]
-    scores = [r[4] for r in day_rows]
-
-    fig, ax = plt.subplots(figsize=(max(8, 0.22 * len(tickers)), 4))
-    ax.bar(tickers, scores, color=["#2a9d8f" if s >= 0 else "#e76f51" for s in scores])
-    ax.axhline(0, color="black", linewidth=0.6)
-    ax.set_ylabel("mean sentiment (positive − negative)")
-    ax.set_title(f"Headline sentiment by company, previous close to close, {day.isoformat()}")
-    ax.tick_params(axis="x", rotation=80, labelsize=7)
-    fig.tight_layout()
     p = out / "sentiment.png"
-    fig.savefig(p, dpi=120)
-    plt.close(fig)
+    p.write_bytes(
+        charts.sentiment_bar(
+            [r[2] for r in day_rows],
+            [r[5] for r in day_rows],
+            f"Headline sentiment by company, previous close to close, {day.isoformat()}",
+        )
+    )
     written.append(p)
 
-    pairs = [(r[4], r[7], r[1]) for r in day_rows if r[7] is not None]
+    pairs = [(r[5], r[8], r[2]) for r in day_rows if r[8] is not None]
     if len(pairs) >= 2:
-        xs = [p[0] for p in pairs]
-        ys = [p[1] * 100 for p in pairs]
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.scatter(xs, ys, color="#264653")
-        for x, y, t in zip(xs, ys, (p[2] for p in pairs), strict=True):
-            ax.annotate(t, (x, y), fontsize=6, xytext=(2, 2), textcoords="offset points")
-        if len(set(xs)) > 1:
-            import numpy as np
-
-            slope, intercept = np.polyfit(xs, ys, 1)
-            grid = np.linspace(min(xs), max(xs), 2)
-            ax.plot(grid, slope * grid + intercept, color="#e76f51", linewidth=1)
         pearson = next(
             (
                 c
@@ -293,13 +273,10 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
             )
         else:
             subtitle = "no correlation computed"
-        ax.set_xlabel("mean sentiment, previous close to close")
-        ax.set_ylabel("daily return (%)")
-        ax.set_title(f"Sentiment vs daily return, {day.isoformat()}\n{subtitle}")
-        fig.tight_layout()
         p = out / "correlation.png"
-        fig.savefig(p, dpi=120)
-        plt.close(fig)
+        p.write_bytes(
+            charts.scatter(pairs, f"Sentiment vs daily return, {day.isoformat()}", subtitle)
+        )
         written.append(p)
     return written
 
@@ -307,74 +284,22 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
 def _leadlag_chart(base: Path, day: date, rolling) -> list[Path]:
     """Pooled Pearson by lag for the three matched pairs, at the longest horizon
     that has every lag."""
-    from murmur.analysis import HORIZONS, MATCHED_PAIRS
+    from murmur.analysis import HORIZONS
+    from murmur.api import charts
 
     pooled = [
-        r
+        dict(r)
         for r in rolling
         if r["scope"] == "pooled" and r["method"] == "pearson" and r["source"] == "all"
     ]
-    if not pooled:
+    picked = charts.pick_horizon(pooled, HORIZONS)
+    if picked is None:
         return []
-    by_h: dict[int, dict[tuple[str, str, int], sqlite3.Row]] = {}
-    for r in pooled:
-        by_h.setdefault(r["months"], {})[(r["window"], r["return_type"], r["lag"])] = r
-    horizon = next(
-        (
-            h
-            for h in sorted(HORIZONS, reverse=True)
-            if h in by_h
-            and all((w, t, lag) in by_h[h] for w, t in MATCHED_PAIRS for lag in (-1, 0, 1))
-        ),
-        None,
-    )
-    if horizon is None:
-        return []
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    rows = by_h[horizon]
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    colors = {"overnight": "#264653", "intraday": "#2a9d8f", "day": "#e76f51"}
-    for i, (window, return_type) in enumerate(MATCHED_PAIRS):
-        xs = [lag + (i - 1) * 0.08 for lag in (-1, 0, 1)]
-        ys = [rows[(window, return_type, lag)]["estimate"] for lag in (-1, 0, 1)]
-        err = [
-            [
-                ys[j] - (rows[(window, return_type, lag)]["ci_low"] or ys[j])
-                for j, lag in enumerate((-1, 0, 1))
-            ],
-            [
-                (rows[(window, return_type, lag)]["ci_high"] or ys[j]) - ys[j]
-                for j, lag in enumerate((-1, 0, 1))
-            ],
-        ]
-        n = rows[(window, return_type, 0)]["n"]
-        ax.errorbar(
-            xs,
-            ys,
-            yerr=err,
-            fmt="o-",
-            capsize=3,
-            color=colors[window],
-            label=f"{window} news vs {return_type} return (n={n})",
-        )
-    ax.axhline(0, color="black", linewidth=0.6)
-    ax.set_xticks([-1, 0, 1])
-    ax.set_xticklabels(
-        ["-1\nnews after return\n(follows)", "0\nsame session", "+1\nnews before return\n(leads)"]
-    )
-    ax.set_ylabel("Pearson r, pooled over tickers and days")
-    ax.set_title(f"Does news lead or follow prices?  last {horizon} month(s) to {day.isoformat()}")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
+    horizon, rows = picked
     out = day_dir(base, day)
     out.mkdir(parents=True, exist_ok=True)
     p = out / "leadlag.png"
-    fig.savefig(p, dpi=120)
-    plt.close(fig)
+    p.write_bytes(charts.leadlag(rows, horizon, day.isoformat()))
     return [p]
 
 
@@ -419,6 +344,30 @@ def compact_month(base: Path, table: str, month: str) -> Path | None:
     return month_file
 
 
+def rebuild_month(store: Store, config: Config, month: str) -> list[Path]:
+    """Regenerate a finished month's files from the store (not a merge), so
+    deletions reach the published tree. Day directories keep only their charts."""
+    import shutil
+
+    base = config.published_dir
+    mdir = month_dir(base, month)
+    if mdir.is_dir():
+        for p in mdir.glob("*.parquet"):
+            p.unlink()
+        for ddir in (p for p in mdir.iterdir() if p.is_dir()):
+            for p in ddir.glob("*.parquet"):
+                p.unlink()
+            if not any(ddir.iterdir()):
+                shutil.rmtree(ddir, ignore_errors=True)
+    written: list[Path] = []
+    for iso in store.known_days():
+        if iso.startswith(month):
+            written += export_day(store, config, date.fromisoformat(iso), today=date.max)
+    written += compact_finished_months(base, "9999-99")
+    _write_index(base)
+    return sorted(p for p in set(written) if p.exists())
+
+
 # -- index --------------------------------------------------------------------
 
 
@@ -437,12 +386,17 @@ def _entry(base: Path, path: Path) -> dict:
         day = f"{parts[0]}-{parts[1]}"
     else:
         day = f"{parts[0]}-{parts[1]}-{parts[2]}"
+    st = path.stat()
+    from datetime import UTC, datetime
+
     return {
         "table": "charts" if path.suffix == ".png" else rel.stem,
         "date": day,
         "path": rel.as_posix(),
         "format": path.suffix.lstrip("."),
         "rows": _row_count(path),
+        "bytes": st.st_size,
+        "modified": datetime.fromtimestamp(st.st_mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 

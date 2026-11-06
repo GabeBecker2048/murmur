@@ -69,9 +69,11 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
 
     assert not (base / "2026/11/05/rolling_correlations.parquet").exists()  # nothing rolling yet
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.5.1"
+    assert index["murmur_version"] == "0.6.0"
     entries = {e["path"]: e for e in index["files"]}
-    assert entries["2026/11/05/returns.parquet"] == {
+    entry = entries["2026/11/05/returns.parquet"]
+    assert entry["bytes"] > 0 and entry["modified"].endswith("Z")
+    assert {k: entry[k] for k in ("table", "date", "path", "format", "rows")} == {
         "table": "returns",
         "date": "2026-11-05",
         "path": "2026/11/05/returns.parquet",
@@ -127,7 +129,8 @@ def test_monthly_compaction(store, scorer, cfg):  # noqa: F811
     assert len(pd.read_parquet(base / "2026/10/articles.parquet")) == 8
     assert len(pd.read_parquet(base / "2026/10/universe.parquet")) == 4
     index = {e["path"]: e for e in json.loads((base / "index.json").read_text())["files"]}
-    assert index["2026/10/articles.parquet"] == {
+    entry = index["2026/10/articles.parquet"]
+    assert {k: entry[k] for k in ("table", "date", "path", "format", "rows")} == {
         "table": "articles",
         "date": "2026-10",
         "path": "2026/10/articles.parquet",
@@ -182,3 +185,22 @@ def test_rolling_table_and_leadlag_chart(store, scorer, cfg):  # noqa: F811
     }
     assert index["2026/11/05/leadlag.png"]["table"] == "charts"
     assert index["2026/11/05/rolling_correlations.parquet"]["rows"] == len(df)
+
+
+def test_rebuild_month_drops_deleted_rows(store, scorer, cfg):  # noqa: F811
+    from murmur.export import rebuild_month
+
+    oct30, oct29 = date(2026, 10, 30), date(2026, 10, 29)
+    prepared(store, scorer, cfg, day=oct30, prev=oct29)
+    export_day(store, cfg, oct30, today=TODAY)
+    base = cfg.published_dir
+    assert len(pd.read_parquet(base / "2026/10/correlations.parquet")) == 18
+    store.delete_analysis("2026-10-30")
+    # compaction merges and would keep the stale rows; a rebuild regenerates from the store
+    written = rebuild_month(store, cfg, "2026-10")
+    assert not (base / "2026/10/correlations.parquet").exists()
+    assert (base / "2026/10/prices.parquet").exists()
+    assert len(pd.read_parquet(base / "2026/10/articles.parquet")) == 8
+    assert all(p.suffix != ".parquet" or p.parent == base / "2026/10" for p in written)
+    index = json.loads((base / "index.json").read_text())
+    assert not any(e["path"] == "2026/10/correlations.parquet" for e in index["files"])
