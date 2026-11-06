@@ -4,6 +4,25 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.7.1] - 2026-11-06
+
+Backfills get real history.
+
+### Added
+
+- Past months are **reconstructed** instead of copying today's list: each
+  candidate's cap on the month's first trading day is its shares outstanding
+  then (SEC XBRL frames, public domain, with today's implied count as the
+  fallback for per-class filers) times its close that day. Stored with
+  `method = 'reconstructed'` (schema v9), flagged `reconstructed` in the
+  index dataset and `method` in `GET /index/{name}`. Candidate pool: today's
+  screener list.
+- `backfill` runs news and prices month by month so each month uses its own
+  constituents.
+- Finnhub waits out a 429 and retries (twice) instead of failing the ticker.
+- A test pins that a backfill never touches existing headlines: Yahoo rows
+  keep their id and source, a headline both sources carried records both.
+
 ## [0.7.0] - 2026-11-06
 
 Datasets, control, the web UI.

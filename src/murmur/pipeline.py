@@ -513,6 +513,18 @@ def run_day(
     return results
 
 
+def month_spans(start: date, end: date) -> list[tuple[date, date]]:
+    """Split ``[start, end]`` at month boundaries, so a backfill asks for each month's
+    own constituents (``membership_for`` of the span's end) instead of one list."""
+    spans = []
+    cursor = start
+    while cursor <= end:
+        last = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        spans.append((cursor, min(last, end)))
+        cursor = last + timedelta(days=1)
+    return spans
+
+
 def backfill(
     store: Store,
     config: Config,
@@ -537,12 +549,19 @@ def backfill(
             for table, n in store.delete_analysis(d.isoformat()).items():
                 deleted[table] = deleted.get(table, 0) + n
         out["deleted"] = deleted
+    spans = month_spans(start, end)
     if "news" in stages:
-        jobctl.report("news", message=f"{start}..{end}")
-        out["news"] = backfill_news(store, config, start, end)
+        notes = []
+        for i, (a, b) in enumerate(spans):
+            jobctl.report("news", i, len(spans), f"{a}..{b}")
+            notes.append(backfill_news(store, config, a, b))
+        out["news"] = notes
     if "prices" in stages:
-        jobctl.report("prices", message=f"{start}..{end}")
-        out["prices"] = backfill_prices(store, config, start, end)
+        notes = []
+        for i, (a, b) in enumerate(spans):
+            jobctl.report("prices", i, len(spans), f"{a}..{b}")
+            notes.append(backfill_prices(store, config, a, b))
+        out["prices"] = notes
     if "sentiment" in stages:
         jobctl.report("sentiment")
         out["sentiment"] = run_sentiment(store, config)

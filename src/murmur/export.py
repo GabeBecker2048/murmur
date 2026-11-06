@@ -120,6 +120,7 @@ def q_constituents(store: Store, config: Config, month: str) -> list[tuple]:
     members = store.universe_month(month)
     year, mm = (int(x) for x in month.split("-"))
     effective = first_trading_day(year, mm).isoformat()
+    reconstructed = store.universe_month_method(month) == "reconstructed"
     return [
         (
             month,
@@ -131,6 +132,7 @@ def q_constituents(store: Store, config: Config, month: str) -> list[tuple]:
             m.exchange,
             int(m.market_cap) if m.market_cap is not None else None,
             m.weight,
+            reconstructed,
         )
         for m in members
     ]
@@ -193,6 +195,7 @@ CONSTITUENTS_COLUMNS = (
     "exchange",
     "market_cap",
     "weight",
+    "reconstructed",
 )
 CHANGES_COLUMNS = ("month", "cik", "ticker", "name", "action", "rank")
 PRICES_COLUMNS = (
@@ -313,7 +316,9 @@ def datasets(config: Config) -> list[Dataset]:
             f"The {index.size} largest US-domiciled companies on NYSE/Nasdaq by market cap, "
             "rebalanced on the first trading day of each month, with each company's rank "
             "and its weight (share of the total cap). `changes` lists additions and "
-            "removals versus the previous month.",
+            "removals versus the previous month. Months backfilled after the fact are "
+            "`reconstructed`: caps from SEC share counts times that day's close, out of "
+            "today's candidate pool.",
             MONTHLY,
             (
                 Table(

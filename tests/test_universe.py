@@ -55,13 +55,13 @@ SEC = {
 }
 
 CANDIDATES = [
-    Candidate("AAPL", "Apple Inc.", 5.0e12, "NMS", 1),
-    Candidate("GOOGL", "Alphabet Inc.", 3.5e12, "NMS", 1),
-    Candidate("GOOG", "Alphabet Inc.", 3.4e12, "NMS", 1),  # same CIK as GOOGL
-    Candidate("TSM", "Taiwan Semiconductor", 1.8e12, "NYQ", 1),  # foreign
-    Candidate("SPCX", "Space Exploration", 1.6e12, "NMS", 1),  # not in SEC list (test)
-    Candidate("BRK-B", "Berkshire Hathaway Inc.", 1.2e12, "NYQ", 1),
-    Candidate("JPM", "JPMorgan Chase", 0.8e12, "NYQ", 1),
+    Candidate("AAPL", "Apple Inc.", 5.0e12, "NMS", 1, price=250.0),
+    Candidate("GOOGL", "Alphabet Inc.", 3.5e12, "NMS", 1, price=250.0),
+    Candidate("GOOG", "Alphabet Inc.", 3.4e12, "NMS", 1, price=250.0),  # same CIK as GOOGL
+    Candidate("TSM", "Taiwan Semiconductor", 1.8e12, "NYQ", 1, price=300.0),  # foreign
+    Candidate("SPCX", "Space Exploration", 1.6e12, "NMS", 1, price=100.0),  # not in SEC list
+    Candidate("BRK-B", "Berkshire Hathaway Inc.", 1.2e12, "NYQ", 1, price=500.0),
+    Candidate("JPM", "JPMorgan Chase", 0.8e12, "NYQ", 1, price=320.0),
 ]
 
 COUNTRIES = {
@@ -188,3 +188,80 @@ def test_coverage_cannot_exceed_the_index(tmp_path):
 def test_static_source_names():
     members = StaticUniverse({"MSFT": "Microsoft", "AAPL": "Apple"}).build("2026-11")
     assert [(m.rank, m.ticker) for m in members] == [(1, "AAPL"), (2, "MSFT")]
+
+
+def test_historical_reconstruction_reranks_from_shares_and_closes(store):
+    from datetime import date
+
+    from murmur.universe import RECONSTRUCTED, historical_shares
+
+    screener = FakeScreener()
+    # a month ago Berkshire traded far above today's price and Alphabet far below:
+    closes = {
+        "AAPL": 200.0,
+        "GOOGL": 100.0,
+        "GOOG": 100.0,
+        "TSM": 150.0,
+        "SPCX": 50.0,
+        "BRK-B": 600.0,
+        "JPM": 250.0,
+    }
+    # SEC frame knows Apple and JPM; Alphabet reports per class (absent); Berkshire's count
+    # is a single class far below today's implied count -> today's count is used instead
+    shares = {320193: 15e9, 19617: 2.8e9, 1067983: 1.0e6}
+    calls = []
+
+    def shares_fetch(contact, day):
+        calls.append(day)
+        return shares
+
+    src = MarketCapUniverse(
+        store,
+        size=3,
+        sec_contact="x@y.z",
+        screener=screener,
+        sec_fetch=lambda c: SEC,
+        shares_fetch=shares_fetch,
+        closes_fetch=lambda symbols, day: closes,
+        today=lambda: date(2026, 11, 6),
+    )
+    assert src.method("2026-11") == "live" and src.method("2026-10") == RECONSTRUCTED
+    members = src.build("2026-10")
+    assert calls == [date(2026, 10, 1)]  # the month's first trading day
+    caps = {m.ticker: m.market_cap for m in members}
+    # AAPL: SEC 15e9 x 200 = 3.0e12; BRK-B: implied 2.4e9 x 600 = 1.44e12 (SEC count rejected
+    # as a single class); GOOGL: implied 1.4e10 x 100 = 1.4e12; JPM: SEC 2.8e9 x 250 = 7e11
+    assert [(m.rank, m.ticker) for m in members] == [(1, "AAPL"), (2, "BRK-B"), (3, "GOOGL")]
+    assert caps["AAPL"] == 15e9 * 200.0 and round(caps["BRK-B"]) == round(2.4e9 * 600.0)
+    assert abs(sum(m.weight for m in members) - 1) < 1e-9
+
+    c = Candidate("X", "X", market_cap=1.0e12, exchange="NMS", volume=1, price=100.0)
+    assert historical_shares(c, 9.9e9) == 9.9e9  # plausible SEC figure wins
+    assert historical_shares(c, 1.0e6) == 1.0e10  # single class of a multi-class filer: implied
+    assert historical_shares(c, None) == 1.0e10
+
+
+def test_membership_for_a_past_month_is_marked_reconstructed(store, tmp_path):
+    from datetime import date
+
+    user = tmp_path / "c.toml"
+    user.write_text('[universe]\nsource = "marketcap"\nsize = 2\n')
+    cfg = load_config(user, env={})
+
+    class Src:
+        name = "fake"
+
+        def build(self, month):
+            return [
+                UniverseMember("AAPL", "Apple", 1.0, 1, 1),
+                UniverseMember("JPM", "JPM", 0.5, 2, 2),
+            ]
+
+        def method(self, month):
+            return "reconstructed" if month < "2026-11" else "live"
+
+    membership_for(store, cfg, date(2026, 10, 15), Src())
+    membership_for(store, cfg, date(2026, 11, 5), Src())
+    assert store.universe_month_method("2026-10") == "reconstructed"
+    assert store.universe_month_method("2026-11") == "live"
+    assert store.universe_month_method("2026-09") is None

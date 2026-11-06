@@ -231,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.7.0" in capsys.readouterr().out
+    assert "murmur 0.7.1" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):
@@ -408,3 +408,76 @@ def test_backfill_runs_the_chosen_stages_and_regenerates(store, cfg, monkeypatch
     out = pipeline.backfill(store, cfg, start, end, stages=["analyze", "export"], regenerate=True)
     assert out["deleted"]["correlations"] >= 12 and out["months_rebuilt"] == ["2026-11"]
     assert len(store.correlations_on("2026-11-05")) == 12  # recomputed
+
+
+def test_month_spans():
+    from murmur.pipeline import month_spans
+
+    assert month_spans(date(2026, 10, 20), date(2026, 12, 3)) == [
+        (date(2026, 10, 20), date(2026, 10, 31)),
+        (date(2026, 11, 1), date(2026, 11, 30)),
+        (date(2026, 12, 1), date(2026, 12, 3)),
+    ]
+    assert month_spans(date(2026, 11, 5), date(2026, 11, 5)) == [
+        (date(2026, 11, 5), date(2026, 11, 5))
+    ]
+
+
+class YahooLike(FakeNews):
+    name = "yahoo"
+
+    def fetch(self, ticker):
+        from dataclasses import replace
+
+        return [replace(a, source="yahoo") for a in super().fetch(ticker)]
+
+
+class FinnhubLike(VariedRangeNews):
+    """A range source that reports the same headlines Yahoo already stored (same URL)
+    plus one of its own per company."""
+
+    name = "finnhub"
+
+    def fetch_range(self, ticker, start, end):
+        self.calls.append((ticker, start, end))
+        headline = COMPANIES[ticker][5]
+        return [
+            Article(f"https://e/{ticker}/1", headline, "2026-11-05T15:00:00Z", self.name),
+            Article(f"https://f/{ticker}/x", f"{ticker} files 10-Q", f"{end}T14:00:00Z", self.name),
+        ]
+
+
+def test_backfill_keeps_every_yahoo_headline_and_records_both_sources(store, cfg, monkeypatch):
+    # day 1: the daily run stores Yahoo headlines (what the server has today)
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [YahooLike()])
+    monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
+    monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
+    pipeline.run_day(store, cfg, DAY, "schedule")
+    before = {r["url"]: r for r in store.conn.execute("SELECT id, url, source FROM articles")}
+    assert before and all(r["source"] == "yahoo" for r in before.values())
+    n_before = len(before)
+
+    # later: a Finnhub backfill over the same days
+    finnhub = FinnhubLike()
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [finnhub])
+    out = pipeline.backfill(
+        store, cfg, date(2026, 11, 4), DAY, stages=["news", "sentiment", "analyze", "export"]
+    )
+    assert out["news"] and finnhub.calls
+    after = {r["url"]: r for r in store.conn.execute("SELECT id, url, source FROM articles")}
+    # every Yahoo row is still there, same id, still first seen through yahoo
+    for url, row in before.items():
+        assert after[url]["id"] == row["id"] and after[url]["source"] == "yahoo"
+    assert len(after) == n_before + len(COMPANIES)  # only the genuinely new headlines were added
+    shared = store.conn.execute(
+        """SELECT group_concat(source) FROM (SELECT source FROM article_sources
+           WHERE article_id = ? ORDER BY seen_at, rowid)""",
+        (before["https://e/AAPL/1"]["id"],),
+    ).fetchone()[0]
+    assert shared == "yahoo,finnhub"
+    # and the exported news file carries the Yahoo rows with both sources
+    import pandas as pd
+
+    news = pd.read_parquet(cfg.published_dir / "news/2026/11/05/20261105.articles.parquet")
+    apple = news[(news.ticker == "AAPL") & (news.url == "https://e/AAPL/1")].iloc[0]
+    assert apple.source == "yahoo" and apple.sources == "yahoo,finnhub"

@@ -74,6 +74,34 @@ def parse_download(
     return bars
 
 
+def closes_on(symbols: list[str], day: date, tz: str) -> dict[str, float]:
+    """The last close on or before ``day`` for each symbol (one bulk download of the
+    week ending that day). Symbols with no data are absent."""
+    import yfinance as yf
+
+    if not symbols:
+        return {}
+    from datetime import timedelta
+
+    df = yf.download(
+        list(symbols),
+        start=(day - timedelta(days=7)).isoformat(),
+        end=(day + timedelta(days=1)).isoformat(),
+        interval="1d",
+        auto_adjust=False,
+        actions=False,
+        group_by="ticker",
+        progress=False,
+        threads=True,
+    )
+    bars = parse_download(df, {s: s for s in symbols}, tz)
+    out: dict[str, float] = {}
+    for b in sorted(bars, key=lambda b: b.date):
+        if b.date <= day.isoformat():
+            out[b.ticker] = b.close
+    return out
+
+
 class YfinancePrices:
     name = SOURCE
 

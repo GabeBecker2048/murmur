@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -288,6 +288,10 @@ MIGRATIONS: dict[int, str] = {
         PRIMARY KEY (ticker, execution_date)
     );
     """,
+    9: """
+    -- 0.7.1: how a month's caps were obtained (live screener | reconstructed | static).
+    ALTER TABLE universe_months ADD COLUMN method TEXT NOT NULL DEFAULT 'live';
+    """,
 }
 
 JOB_ACTIVE = ("queued", "running", "cancelling")
@@ -405,15 +409,19 @@ class Store:
         return [_member(r) for r in rows]
 
     def save_universe_month(
-        self, month: str, members: Iterable[UniverseMember], computed_at: str
+        self,
+        month: str,
+        members: Iterable[UniverseMember],
+        computed_at: str,
+        method: str = "live",
     ) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,))
             self.conn.executemany(
                 """INSERT INTO universe_months (month, rank, ticker, cik, name, market_cap,
-                                                computed_at, weight, exchange)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                                computed_at, weight, exchange, method)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (
                         month,
@@ -425,10 +433,17 @@ class Store:
                         computed_at,
                         m.weight,
                         m.exchange,
+                        method,
                     )
                     for m in members
                 ],
             )
+
+    def universe_month_method(self, month: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT method, computed_at FROM universe_months WHERE month = ? LIMIT 1", (month,)
+        ).fetchone()
+        return row["method"] if row else None
 
     def universe_months(self) -> list[str]:
         rows = self.conn.execute("SELECT DISTINCT month FROM universe_months ORDER BY month")
