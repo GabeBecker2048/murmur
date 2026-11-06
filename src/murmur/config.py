@@ -64,11 +64,20 @@ def packaged_defaults() -> dict:
     return tomllib.loads(text)
 
 
-def _merge(base: dict, override: Mapping) -> dict:
+# Tables that a user file replaces wholesale instead of merging key by key.
+REPLACE_TABLES = {("universe", "static")}
+
+
+def _merge(base: dict, override: Mapping, path: tuple[str, ...] = ()) -> dict:
     out = dict(base)
     for key, value in override.items():
-        if isinstance(value, Mapping) and isinstance(out.get(key), dict):
-            out[key] = _merge(out[key], value)
+        here = (*path, key)
+        if (
+            isinstance(value, Mapping)
+            and isinstance(out.get(key), dict)
+            and here not in REPLACE_TABLES
+        ):
+            out[key] = _merge(out[key], value, here)
         else:
             out[key] = value
     return out

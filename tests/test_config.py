@@ -54,9 +54,9 @@ def test_static_universe_can_be_replaced(tmp_path):
     user = tmp_path / "u.toml"
     user.write_text('[universe.static]\nAAPL = "Apple"\n"BRK.B" = "Berkshire"\n')
     cfg = load_config(user, env={})
-    # TOML tables merge key by key, so the user list is added to the default one
-    assert cfg.universe.static["BRK.B"] == "Berkshire"
-    assert "MSFT" in cfg.universe.static
+    # the static list is replaced wholesale, not merged with the packaged 50
+    assert cfg.universe.static == {"AAPL": "Apple", "BRK.B": "Berkshire"}
+    assert cfg.news.max_articles == 20  # other tables still merge
 
 
 def test_unsupported_universe_source(tmp_path):
