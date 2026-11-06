@@ -28,11 +28,10 @@ one lands.
 - A `backfill` job: date range, any subset of news/prices/sentiment/analyze/
   export in pipeline order, and `regenerate` (confirm required) for a clean
   slate with the months' files rebuilt.
-- A Databento price source (`prices.source = "databento"`, `EQUS.SUMMARY`
-  end-of-day bars, `MURMUR_DATABENTO_API_KEY`) and a split schedule for it:
-  `schedule.analysis_time` adds a morning `analyze` run for the previous
-  session while `schedule.time` becomes a news-only `collect` run. Runs carry
-  a `kind` (schema v8); `murmur run --kind`.
+- A split schedule: `schedule.analysis_time` adds a morning `analyze` run for
+  the previous session while `schedule.time` becomes a news-only `collect`
+  run, for price sources whose bar is not available at 18:00. Runs carry a
+  `kind` (schema v8); `murmur run --kind`.
 - Split ratios (`prices.splits`, Polygon's reference endpoint, `splits` table)
   applied in `compute_returns`, so unadjusted sources give correct returns
   across a split; `split_ratio` in the prices dataset.

@@ -61,14 +61,12 @@ reconstructed, and `murmur universe` prints the list in force on a day.
 | `gdelt` | news | nothing | yes, to 2015 | global news by company name; one request every 5 s. **Currently refuses every request** with a rate-limit message, from two different networks; keep it off until that changes |
 | `yfinance` | prices | nothing | yes | the default; one request for all tickers |
 | `polygon` | prices | API key | yes, 2 years | grouped daily bars, one request per trading day; 5 calls a minute. The free plan refuses today's bar until the day is over, so it serves backfills, not the 18:00 run |
-| `databento` | prices | API key | yes, since 2018 | the official consolidated end-of-day bar (`EQUS.SUMMARY`, from Nasdaq's end-of-day feed) through Databento's historical API; usage-priced by volume (a year of 500 symbols is a few MB), no subscription. Final at 20:15 ET, so it needs `schedule.analysis_time`. Unadjusted: see splits below. Redistribution carries "Data Provided by Databento" |
 
 `news.sources` lists the news sources the daily run queries; `prices.source`
-picks the price source. Keys go in `[finnhub]`/`[polygon]`/`[databento]
-api_key` or the `MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY`/
-`MURMUR_DATABENTO_API_KEY` environment variables.
+picks the price source. Keys go in `[finnhub]`/`[polygon] api_key` or the
+`MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY` environment variables.
 
-**Splits.** Databento and Polygon deliver unadjusted prices, so a 10-for-1
+**Splits.** Polygon delivers unadjusted prices, so a 10-for-1
 split would look like a 90 % loss. `prices.splits` names a source of split
 ratios (`polygon`'s reference endpoint, one request for the whole market;
 `auto` uses it when the key is set) and `compute_returns` divides the previous
@@ -117,8 +115,8 @@ re-queued after 20 minutes, up to 3 times. If the process starts after the
 slot and the day has no successful run yet, the run is queued immediately, so
 a restart never loses a day.
 
-With `schedule.analysis_time` set (for a price source whose bar is final only
-in the evening, like Databento) the day splits into two slots: at
+With `schedule.analysis_time` set (for a price source whose bar for a day is
+not available at 18:00, like Polygon's free plan) the day splits into two slots: at
 `schedule.time` a **collect** run fetches, scores and publishes the day's
 news, and at `analysis_time` (say 06:30) an **analyze** run fetches prices and
 computes and publishes the analysis for the previous session. Each slot has
@@ -264,7 +262,7 @@ max_articles = 20              # per ticker per fetch (Yahoo)
 sources = ["yahoo"]            # any of "yahoo", "finnhub", "gdelt"
 
 [prices]
-source = "yfinance"            # or "databento" (needs schedule.analysis_time) or "polygon"
+source = "yfinance"            # or "polygon" (needs schedule.analysis_time)
 splits = "auto"                # split ratios: polygon when its key is set; "polygon" or "none"
 
 [finnhub]
@@ -272,9 +270,6 @@ api_key = ""                   # or MURMUR_FINNHUB_API_KEY
 
 [polygon]
 api_key = ""                   # or MURMUR_POLYGON_API_KEY
-
-[databento]
-api_key = ""                   # or MURMUR_DATABENTO_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"

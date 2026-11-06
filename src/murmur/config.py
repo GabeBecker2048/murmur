@@ -22,14 +22,13 @@ ENV_CONFIG = "MURMUR_CONFIG"
 ENV_DATA_DIR = "MURMUR_DATA_DIR"
 ENV_FINNHUB_KEY = "MURMUR_FINNHUB_API_KEY"
 ENV_POLYGON_KEY = "MURMUR_POLYGON_API_KEY"
-ENV_DATABENTO_KEY = "MURMUR_DATABENTO_API_KEY"
 ENV_API_TOKEN = "MURMUR_API_TOKEN"
 ENV_CORS = "MURMUR_CORS_ORIGINS"
 DEFAULT_USER_CONFIG = Path("murmur.toml")
 SETTINGS_FILENAME = "settings.toml"
 
 NEWS_SOURCES = ("yahoo", "finnhub", "gdelt")
-PRICE_SOURCES = ("yfinance", "polygon", "databento")
+PRICE_SOURCES = ("yfinance", "polygon")
 SPLIT_SOURCES = ("auto", "polygon", "none")
 UNIVERSE_SOURCES = ("static", "marketcap")
 DEVICES = ("cpu", "cuda", "auto")
@@ -40,7 +39,7 @@ RUN_KINDS = ("full", "collect", "analyze")
 ``schedule.analysis_time`` is set); prices + analysis for a past session (the morning slot)."""
 TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 
-SECRET_KEYS = ("finnhub.api_key", "polygon.api_key", "databento.api_key")
+SECRET_KEYS = ("finnhub.api_key", "polygon.api_key")
 """Masked when shown, refused when edited through the API."""
 LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", *SECRET_KEYS)
 """Keys the settings API refuses: they need a restart, or are secrets."""
@@ -65,14 +64,13 @@ class PricesConfig:
     source: str
     splits: str
     """Where split ratios come from: ``polygon``, ``none``, or ``auto`` (polygon when a key
-    is configured). Unadjusted sources (databento, polygon) need them for correct returns."""
+    is configured). An unadjusted source (polygon) needs them for correct returns."""
 
 
 @dataclass(frozen=True)
 class KeysConfig:
     finnhub: str
     polygon: str
-    databento: str
 
 
 @dataclass(frozen=True)
@@ -114,7 +112,7 @@ class ScheduleConfig:
     """The daily slot: the whole day, or only news collection when ``analysis_time`` is set."""
     analysis_time: str
     """Optional second slot (HH:MM): prices + analysis + export for the previous session.
-    For price sources whose bar for a day is final only in the evening (Databento)."""
+    For price sources whose bar for a day is final only after the evening run."""
     paused: bool
     retries: int
     retry_delay_minutes: int
@@ -283,7 +281,6 @@ def load_config(
     for env_key, table, key in (
         (ENV_FINNHUB_KEY, "finnhub", "api_key"),
         (ENV_POLYGON_KEY, "polygon", "api_key"),
-        (ENV_DATABENTO_KEY, "databento", "api_key"),
         (ENV_API_TOKEN, "api", "token"),
         (ENV_CORS, "api", "cors_origins"),
     ):
@@ -371,7 +368,6 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
             keys=KeysConfig(
                 finnhub=str(raw.get("finnhub", {}).get("api_key", "")),
                 polygon=str(raw.get("polygon", {}).get("api_key", "")),
-                databento=str(raw.get("databento", {}).get("api_key", "")),
             ),
             sentiment=SentimentConfig(
                 model=str(raw["sentiment"]["model"]),
@@ -442,8 +438,8 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "choice",
         "choices": list(PRICE_SOURCES),
         "help": (
-            "Daily price source. databento (official consolidated end-of-day, final at 20:15 ET)"
-            " and polygon cannot serve today's bar at 18:00: set schedule.analysis_time."
+            "Daily price source. polygon's free plan cannot serve today's bar at 18:00: set"
+            " schedule.analysis_time for it."
         ),
     },
     {
@@ -623,12 +619,6 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "secret",
         "editable": False,
         "help": "Env MURMUR_POLYGON_API_KEY.",
-    },
-    {
-        "path": "databento.api_key",
-        "type": "secret",
-        "editable": False,
-        "help": "Env MURMUR_DATABENTO_API_KEY.",
     },
 ]
 

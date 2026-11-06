@@ -100,10 +100,7 @@ are gitignored.
   ArtList by quoted company name (no key, 1 request / 5.5 s, 250 records max per query);
   `yfinance_prices.py` one `yf.download()` frame for all tickers (drops today's partial bar
   before 16:05 ET; `fetch_range` uses start/end); `polygon.py` grouped daily bars, one
-  request per trading day (key, 5/min, symbols use dots: `BRK.B`); `databento.py`
-  `EQUS.SUMMARY` `ohlcv-1d` through the historical HTTP API (key as Basic-auth user, POST
-  `timeseries.get_range`, JSON lines with `pretty_px`; clamps `end` to
-  `metadata.get_dataset_range`; dotted symbols; unadjusted, `adj_close=None`); `splits.py`
+  request per trading day (key, 5/min, symbols use dots: `BRK.B`); `splits.py`
   `SplitsSource` (`PolygonSplits` over `/v3/reference/splits`, `NoSplits`) feeding the
   `splits` table that `analysis.compute_returns` applies (`_already_adjusted` guards sources
   that restate history); `sec.py` fetches

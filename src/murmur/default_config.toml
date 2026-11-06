@@ -13,9 +13,8 @@ max_articles = 20               # per ticker per fetch (Yahoo)
 sources = ["yahoo"]
 
 [prices]
-# "yfinance" (no key; today's bar after the close), "databento" (official consolidated
-# end-of-day bars from EQUS.SUMMARY, final at 20:15 ET; needs a key and a morning
-# schedule.analysis_time), or "polygon" (free plan refuses today's bar; backfills).
+# "yfinance" (no key; today's bar after the close) or "polygon" (free plan refuses
+# today's bar until the day is over: backfills, or a morning schedule.analysis_time).
 source = "yfinance"
 # Split ratios so returns across a split day are right with unadjusted sources:
 # "auto" = polygon when its key is set, else none; "polygon"; "none".
@@ -26,9 +25,6 @@ api_key = ""                    # or MURMUR_FINNHUB_API_KEY
 
 [polygon]
 api_key = ""                    # or MURMUR_POLYGON_API_KEY
-
-[databento]
-api_key = ""                    # or MURMUR_DATABENTO_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"
@@ -60,7 +56,7 @@ min_market_cap = 10_000_000_000  # screener floor; keep well below the last comp
 time = "18:00"                  # local time in `timezone`, every day incl. weekends
 # A second slot splits the day: at `time` only news is collected (and scored), and at
 # `analysis_time` prices, analysis and export run for the previous session. Needed
-# when the price source's bar for a day is final only in the evening (databento).
+# when the price source's bar for a day is final only after the evening run.
 analysis_time = ""              # e.g. "06:30"; empty = one full run at `time`
 paused = false                  # true: the scheduler queues nothing (manual jobs still run)
 retries = 3                     # extra attempts when a stage fails

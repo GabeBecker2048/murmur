@@ -1,5 +1,5 @@
 """Stock split ratios, so returns across a split day are right when the price
-source is unadjusted (Databento, Polygon). Polygon's reference endpoint lists
+source is unadjusted (Polygon). Polygon's reference endpoint lists
 every split in the market for a date range; the free plan covers it."""
 
 from __future__ import annotations

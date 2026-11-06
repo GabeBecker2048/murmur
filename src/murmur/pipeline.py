@@ -62,10 +62,6 @@ def default_price_source(config: Config) -> PriceSource:
         from murmur.sources.polygon import PolygonPrices
 
         return PolygonPrices(config.keys.polygon, tz=config.timezone)
-    if config.prices.source == "databento":
-        from murmur.sources.databento import DatabentoPrices
-
-        return DatabentoPrices(config.keys.databento, tz=config.timezone)
     from murmur.sources.yfinance_prices import YfinancePrices
 
     return YfinancePrices(tz=config.timezone)
@@ -80,7 +76,7 @@ def default_splits_source(config: Config) -> SplitsSource:
     choice = config.prices.splits
     if choice == "polygon" or (choice == "auto" and config.keys.polygon):
         return PolygonSplits(config.keys.polygon)
-    if config.prices.source in ("databento", "polygon"):
+    if config.prices.source == "polygon":
         log.warning(
             "prices.splits is %s and the %s source is unadjusted: a split day will show a "
             "wrong return (set MURMUR_POLYGON_API_KEY or prices.splits)",
