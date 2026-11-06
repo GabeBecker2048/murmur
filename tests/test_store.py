@@ -192,7 +192,7 @@ def test_rolling_rows_and_ranges(store):
     assert store.window_sentiment_between("2026-11-01", "2026-11-05", "other") == []
     n = store.replace_rolling(
         "2026-11-05",
-        [(3, "day", "daily", 1, "pooled", "", "pearson", 40, 0.5, 0.01, 0.2, 0.7, "t")],
+        [(3, "day", "daily", 1, "all", "pooled", "", "pearson", 40, 0.5, 0.01, 0.2, 0.7, "t")],
     )
     assert n == 1 and store.rolling_on("2026-11-05")[0]["lag"] == 1
     store.replace_rolling("2026-11-05", [])
@@ -211,3 +211,95 @@ def test_migrates_a_version_3_store(tmp_path):
     with Store(path) as s:
         assert s.schema_version == SCHEMA_VERSION
         assert s.count("rolling_correlations") == 0
+
+
+def test_cross_source_dedup_by_title(store):
+    a1, new1 = store.upsert_article(
+        Article("https://yahoo/1", "Apple beats estimates!", "2026-11-05T15:00:00Z", "yahoo"),
+        "AAPL",
+        "t1",
+    )
+    a2, new2 = store.upsert_article(
+        Article("https://finnhub/9", "Apple beats estimates", "2026-11-05T14:30:00Z", "finnhub"),
+        "AAPL",
+        "t2",
+    )
+    assert new1 and not new2 and a1 == a2
+    assert store.count("articles") == 1 and store.count("article_sources") == 2
+    row = store.conn.execute("SELECT published_at, first_seen_source, url FROM articles").fetchone()
+    assert row["published_at"] == "2026-11-05T14:30:00Z"  # earliest wins
+    assert row["first_seen_source"] == "yahoo" and row["url"] == "https://yahoo/1"
+    assert store.sources_seen() == ["finnhub", "yahoo"]
+    # same title far apart in time is a different article
+    a3, new3 = store.upsert_article(
+        Article("https://gdelt/3", "Apple beats estimates", "2026-11-20T14:30:00Z", "gdelt"),
+        "AAPL",
+        "t3",
+    )
+    assert new3 and a3 != a1
+    assert [r["sources"] for r in store.articles_on("2026-11-05")] == []  # no window yet
+    store.set_article_windows([("2026-11-05", "intraday", a1)])
+    assert store.articles_on("2026-11-05")[0]["sources"] == "yahoo,finnhub"
+
+
+def test_ticker_scores_per_source(store):
+    a1, _ = store.upsert_article(
+        Article("https://y/1", "Apple beats", "2026-11-05T15:00:00Z", "yahoo"), "AAPL", "t"
+    )
+    a2, _ = store.upsert_article(
+        Article("https://f/2", "Apple misses", "2026-11-05T15:00:00Z", "finnhub"), "AAPL", "t"
+    )
+    store.set_article_windows([("2026-11-05", "intraday", a1), ("2026-11-05", "intraday", a2)])
+    store.insert_scores(
+        "m",
+        [
+            (a1, SentimentScores(0.8, 0.1, 0.1, "positive")),
+            (a2, SentimentScores(0.1, 0.8, 0.1, "negative")),
+        ],
+        "t",
+    )
+    assert store.ticker_scores("2026-11-05", ("intraday",), "m")["AAPL"] == (2, pytest.approx(0.0))
+    assert store.ticker_scores("2026-11-05", ("intraday",), "m", "yahoo")["AAPL"] == (
+        1,
+        pytest.approx(0.7),
+    )
+    assert store.ticker_scores("2026-11-05", ("intraday",), "m", "finnhub")["AAPL"] == (
+        1,
+        pytest.approx(-0.7),
+    )
+    assert store.ticker_scores("2026-11-05", ("intraday",), "m", "gdelt") == {}
+
+
+def test_migrates_a_version_4_store(tmp_path):
+    import sqlite3
+
+    from murmur.store import MIGRATIONS
+
+    path = tmp_path / "v4.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript("".join(MIGRATIONS[v] for v in (1, 2, 3, 4)) + "PRAGMA user_version = 4;")
+    conn.execute(
+        """INSERT INTO articles (url, title, title_norm, published_at, source, first_seen_at,
+                                 first_seen_source)
+           VALUES ('u', 'T', 't', 'p', 'yahoo', 's', 'yahoo')"""
+    )
+    conn.execute(
+        "INSERT INTO window_sentiment (date, window, ticker, model, n_articles, mean_score) "
+        "VALUES ('2026-11-05', 'day', 'AAPL', 'm', 2, 0.3)"
+    )
+    conn.execute(
+        """INSERT INTO rolling_correlations (as_of, months, window, return_type, lag, scope, ticker,
+               method, n, estimate, p_value, computed_at)
+           VALUES ('2026-11-05', 3, 'day', 'daily', 1, 'pooled', '', 'pearson', 40, 0.2, 0.1,
+                   't')"""
+    )
+    conn.commit()
+    conn.close()
+    with Store(path) as s:
+        assert s.schema_version == SCHEMA_VERSION
+        assert s.conn.execute("SELECT source, url FROM article_sources").fetchall()[0][:] == (
+            "yahoo",
+            "u",
+        )
+        assert s.window_sentiment_on("2026-11-05", "m")[0]["source"] == "all"
+        assert s.rolling_on("2026-11-05")[0]["source"] == "all"

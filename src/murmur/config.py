@@ -17,6 +17,10 @@ from pathlib import Path
 
 ENV_CONFIG = "MURMUR_CONFIG"
 ENV_DATA_DIR = "MURMUR_DATA_DIR"
+ENV_FINNHUB_KEY = "MURMUR_FINNHUB_API_KEY"
+ENV_POLYGON_KEY = "MURMUR_POLYGON_API_KEY"
+NEWS_SOURCES = ("yahoo", "finnhub", "gdelt")
+PRICE_SOURCES = ("yfinance", "polygon")
 DEFAULT_USER_CONFIG = Path("murmur.toml")
 
 UNIVERSE_SOURCES = ("static", "marketcap")
@@ -30,6 +34,18 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class NewsConfig:
     max_articles: int
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PricesConfig:
+    source: str
+
+
+@dataclass(frozen=True)
+class KeysConfig:
+    finnhub: str
+    polygon: str
 
 
 @dataclass(frozen=True)
@@ -69,6 +85,8 @@ class Config:
     data_dir: Path
     timezone: str
     news: NewsConfig
+    prices: PricesConfig
+    keys: KeysConfig
     sentiment: SentimentConfig
     sec: SecConfig
     universe: UniverseConfig
@@ -134,6 +152,10 @@ def load_config(path: str | Path | None = None, env: Mapping[str, str] | None = 
             raw = _merge(raw, tomllib.load(f))
     if env.get(ENV_DATA_DIR):
         raw["data_dir"] = env[ENV_DATA_DIR]
+    if env.get(ENV_FINNHUB_KEY):
+        raw.setdefault("finnhub", {})["api_key"] = env[ENV_FINNHUB_KEY]
+    if env.get(ENV_POLYGON_KEY):
+        raw.setdefault("polygon", {})["api_key"] = env[ENV_POLYGON_KEY]
     return _build(raw, user_path)
 
 
@@ -150,13 +172,27 @@ def _build(raw: dict, user_path: Path | None) -> Config:
         device = str(raw["sentiment"].get("device", "cpu"))
         if device not in DEVICES:
             raise ConfigError(f"sentiment.device must be one of {DEVICES}, not {device!r}")
+        sources = tuple(str(x) for x in raw["news"].get("sources", ["yahoo"]))
+        bad = [x for x in sources if x not in NEWS_SOURCES]
+        if bad or not sources:
+            raise ConfigError(
+                f"news.sources must be a non-empty list from {NEWS_SOURCES}, not {sources}"
+            )
+        price_source = str(raw.get("prices", {}).get("source", "yfinance"))
+        if price_source not in PRICE_SOURCES:
+            raise ConfigError(f"prices.source must be one of {PRICE_SOURCES}, not {price_source!r}")
         schedule_time = str(raw["schedule"]["time"])
         if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", schedule_time):
             raise ConfigError(f"schedule.time must be HH:MM, not {schedule_time!r}")
         return Config(
             data_dir=Path(raw["data_dir"]),
             timezone=str(raw["timezone"]),
-            news=NewsConfig(max_articles=int(raw["news"]["max_articles"])),
+            news=NewsConfig(max_articles=int(raw["news"]["max_articles"]), sources=sources),
+            prices=PricesConfig(source=price_source),
+            keys=KeysConfig(
+                finnhub=str(raw.get("finnhub", {}).get("api_key", "")),
+                polygon=str(raw.get("polygon", {}).get("api_key", "")),
+            ),
             sentiment=SentimentConfig(
                 model=str(raw["sentiment"]["model"]),
                 batch_size=int(raw["sentiment"]["batch_size"]),

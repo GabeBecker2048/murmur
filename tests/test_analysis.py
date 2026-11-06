@@ -245,8 +245,8 @@ def seed_series(
     store, days, tickers=("AAPL", "MSFT", "GOOGL", "META"), lead=1, model="fake/keywords"
 ):
     """Synthetic history: each ticker's `day` sentiment on session i equals its
-    daily return on session i + lead (news leads prices by `lead` sessions),
-    with a per-ticker offset so pooled and per-ticker series both correlate."""
+    daily return on session i + lead (news leads prices by `lead` sessions);
+    the intraday window carries the opposite sign."""
     import random
 
     rng = random.Random(7)
@@ -257,12 +257,19 @@ def seed_series(
             for d, r in zip(days, rets[t], strict=True)
         )
         store.upsert_prices([PriceBar(t, d.isoformat(), 1, 1, 1, 1, 1, 1) for d in days], "t")
-        for i, d in enumerate(days):
-            if i + lead < len(days):
-                score = rets[t][i + lead]
-                store.upsert_window_sentiment(d.isoformat(), DAY, model, {t: (3, score)})
-                store.upsert_window_sentiment(d.isoformat(), OVERNIGHT, model, {t: (1, score)})
-                store.upsert_window_sentiment(d.isoformat(), INTRADAY, model, {t: (2, -score)})
+    for i, d in enumerate(days):
+        if i + lead >= len(days):
+            continue
+        scores = {t: rets[t][i + lead] for t in tickers}
+        store.upsert_window_sentiment(
+            d.isoformat(), DAY, model, {t: (3, v) for t, v in scores.items()}
+        )
+        store.upsert_window_sentiment(
+            d.isoformat(), OVERNIGHT, model, {t: (1, v) for t, v in scores.items()}
+        )
+        store.upsert_window_sentiment(
+            d.isoformat(), INTRADAY, model, {t: (2, -v) for t, v in scores.items()}
+        )
 
 
 def test_rolling_finds_the_lead(store, cfg):
@@ -316,3 +323,33 @@ def test_rolling_replaces_rows_for_the_day(store, cfg):
     second = rolling_analysis(store, cfg, date(2026, 11, 5), ["AAPL", "MSFT"])
     assert len(second) < len(first)
     assert store.count("rolling_correlations") == len(second)
+
+
+def test_per_source_correlations_once_two_sources_report(store, scorer, cfg):
+    seed(store, scorer)  # everything from "yahoo"
+    result = analyze_day(store, cfg, DAY_, list(COMPANIES))
+    assert {c.source for c in result.correlations} == {"all"}
+    # a second source reports the same (deduplicated) headlines for two tickers,
+    # plus one of its own
+    for ticker in ("AAPL", "GOOGL"):
+        _, _, _, _, overnight, _ = COMPANIES[ticker]
+        store.upsert_article(
+            Article(f"https://f/{ticker}", overnight, f"{DAY_}{OVERNIGHT_AT}", "finnhub"),
+            ticker,
+            "t",
+        )
+    store.upsert_article(
+        Article("https://f/META/x", "Meta plunges", f"{DAY_}{INTRADAY_AT}", "finnhub"), "META", "t"
+    )
+    score_pending(store, scorer)
+    result = analyze_day(store, cfg, DAY_, list(COMPANIES))
+    assert {c.source for c in result.correlations} == {"all", "yahoo", "finnhub"}
+    assert set(result.by_source) == {"yahoo", "finnhub"}
+    assert set(result.by_source["finnhub"][DAY]) == {"AAPL", "GOOGL", "META"}
+    assert set(result.by_source["yahoo"][DAY]) == set(COMPANIES)
+    assert store.count("articles") == 9  # 8 + META's extra; the two shared ones merged
+    rows = store.window_sentiment_on("2026-11-05", cfg.sentiment.model)
+    assert {r["source"] for r in rows} == {"all", "yahoo", "finnhub"}
+    stored = store.correlations_on("2026-11-05")
+    assert {r["source"] for r in stored} == {"all", "yahoo", "finnhub"}
+    assert len(result.matched(source="all")) == 3

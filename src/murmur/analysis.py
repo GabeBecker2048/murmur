@@ -9,7 +9,11 @@ yesterday's return (news follows).
 
 Rolling: as of a day, the same correlations pooled over every (ticker, day)
 observation in the last 1, 3, 6 and 12 months, and per ticker over its own
-series. Sentiment and returns are always joined **by ticker**.
+series.
+
+Both are computed for every source as well as pooled over sources (``source ==
+'all'``) once more than one source has reported articles. Sentiment and
+returns are always joined **by ticker**.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ MIN_POOLED = 30
 MIN_TICKER = 10
 SCOPE = "pooled"
 SOURCE = "all"
+"""The pooled-over-sources value of the ``source`` dimension."""
 POOLED = ""
 """``ticker`` value of a pooled rolling row (NULL would break the primary key)."""
 
@@ -104,6 +109,7 @@ class Correlation:
     ci_low: float | None
     ci_high: float | None
     tickers: tuple[str, ...] = ()
+    source: str = SOURCE
 
 
 @dataclass
@@ -113,18 +119,24 @@ class DayResult:
     trading_day: bool
     returns: dict[str, Return] = field(default_factory=dict)
     sentiment: dict[str, dict[str, tuple[int, float]]] = field(default_factory=dict)
-    """window -> ticker -> (n_articles, mean_score)"""
+    """window -> ticker -> (n_articles, mean_score), pooled over sources"""
     pairs: dict[tuple[str, str, int], list[Pair]] = field(default_factory=dict)
-    """(window, return_type, lag) -> pairs"""
+    """(window, return_type, lag) -> pairs, pooled over sources"""
+    by_source: dict[str, dict[str, dict[str, tuple[int, float]]]] = field(default_factory=dict)
+    """source -> window -> ticker -> (n_articles, mean_score), per source"""
     correlations: list[Correlation] = field(default_factory=list)
+    """every source; ``source == 'all'`` is the pooled set"""
     note: str | None = None
 
-    def matched(self, method: str = "pearson") -> list[Correlation]:
+    def matched(self, method: str = "pearson", source: str = SOURCE) -> list[Correlation]:
         """The lag-0 matched pairs, for one-line summaries."""
         return [
             c
             for c in self.correlations
-            if c.lag == 0 and c.method == method and (c.window, c.return_type) in MATCHED_PAIRS
+            if c.lag == 0
+            and c.method == method
+            and c.source == source
+            and (c.window, c.return_type) in MATCHED_PAIRS
         ]
 
 
@@ -191,10 +203,18 @@ def stored_returns(store: Store, day: date) -> dict[str, dict[str, float]]:
 
 
 def window_sentiment(
-    store: Store, day: date, model: str
+    store: Store, day: date, model: str, source: str = SOURCE
 ) -> dict[str, dict[str, tuple[int, float]]]:
     iso = day.isoformat()
-    return {w: store.ticker_scores(iso, members, model) for w, members in WINDOW_MEMBERS.items()}
+    return {
+        w: store.ticker_scores(iso, members, model, source) for w, members in WINDOW_MEMBERS.items()
+    }
+
+
+def sources_for_analysis(store: Store) -> list[str]:
+    """``'all'`` plus every source that has reported an article, once more than one has."""
+    seen = store.sources_seen()
+    return [SOURCE, *seen] if len(seen) > 1 else [SOURCE]
 
 
 def _fisher_ci(res, n: int) -> tuple[float | None, float | None]:
@@ -227,12 +247,14 @@ def correlate_xy(
     return out
 
 
-def correlate(window: str, return_type: str, lag: int, pairs: list[Pair]) -> list[Correlation]:
+def correlate(
+    window: str, return_type: str, lag: int, pairs: list[Pair], source: str = SOURCE
+) -> list[Correlation]:
     if len(pairs) < MIN_PAIRS:
         return []
     tickers = tuple(p.ticker for p in pairs)
     return [
-        Correlation(window, return_type, lag, method, len(pairs), est, p, lo, hi, tickers)
+        Correlation(window, return_type, lag, method, len(pairs), est, p, lo, hi, tickers, source)
         for method, est, p, lo, hi in correlate_xy(
             [p.sentiment for p in pairs], [p.ret for p in pairs]
         )
@@ -241,7 +263,7 @@ def correlate(window: str, return_type: str, lag: int, pairs: list[Pair]) -> lis
 
 def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> DayResult:
     """Compute and store the day's returns, window sentiment and correlations
-    at every lag whose return day has returns.
+    at every lag whose return day has returns, pooled and per source.
 
     ``tickers`` is the universe for the day; anything outside it is ignored.
     """
@@ -262,10 +284,6 @@ def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> 
         )
 
     result.returns = {t: r for t, r in compute_returns(store, day).items() if t in universe}
-    for window, scores in window_sentiment(store, day, model).items():
-        kept = {t: v for t, v in scores.items() if t in universe}
-        result.sentiment[window] = kept
-        store.upsert_window_sentiment(iso, window, model, kept)
 
     # returns by lag: lag 0 from this run, the others from the returns table
     returns_at: dict[int, dict[str, dict[str, float]]] = {
@@ -277,41 +295,57 @@ def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> 
 
     computed_at = utc_now_iso()
     thin = []
-    for window in WINDOWS_ALL:
-        scores = result.sentiment[window]
-        for lag in LAGS:
-            rets = {t: v for t, v in returns_at[lag].items() if t in universe}
-            for return_type in RETURN_TYPES:
-                pairs = [
-                    Pair(t, scores[t][0], scores[t][1], rets[t][return_type])
-                    for t in sorted(universe)
-                    if t in scores and t in rets
-                ]
-                result.pairs[(window, return_type, lag)] = pairs
-                found = correlate(window, return_type, lag, pairs)
-                if not found and lag == 0 and (window, return_type) in MATCHED_PAIRS:
-                    thin.append(f"{window}/{return_type} has {len(pairs)} pairs")
-                result.correlations += found
-                for c in found:
-                    store.upsert_correlation(
-                        {
-                            "date": iso,
-                            "window": c.window,
-                            "return_type": c.return_type,
-                            "lag": c.lag,
-                            "scope": SCOPE,
-                            "source": SOURCE,
-                            "method": c.method,
-                            "model": model,
-                            "n": c.n,
-                            "estimate": c.estimate,
-                            "p_value": c.p_value,
-                            "ci_low": c.ci_low,
-                            "ci_high": c.ci_high,
-                            "tickers": ",".join(c.tickers),
-                            "computed_at": computed_at,
-                        }
-                    )
+    for source in sources_for_analysis(store):
+        sentiment = {}
+        for window, scores in window_sentiment(store, day, model, source).items():
+            kept = {t: v for t, v in scores.items() if t in universe}
+            sentiment[window] = kept
+            store.upsert_window_sentiment(iso, window, model, kept, source)
+        if source == SOURCE:
+            result.sentiment = sentiment
+        else:
+            result.by_source[source] = sentiment
+        for window in WINDOWS_ALL:
+            scores = sentiment[window]
+            for lag in LAGS:
+                rets = {t: v for t, v in returns_at[lag].items() if t in universe}
+                for return_type in RETURN_TYPES:
+                    pairs = [
+                        Pair(t, scores[t][0], scores[t][1], rets[t][return_type])
+                        for t in sorted(universe)
+                        if t in scores and t in rets
+                    ]
+                    if source == SOURCE:
+                        result.pairs[(window, return_type, lag)] = pairs
+                    found = correlate(window, return_type, lag, pairs, source)
+                    if (
+                        not found
+                        and source == SOURCE
+                        and lag == 0
+                        and (window, return_type) in MATCHED_PAIRS
+                    ):
+                        thin.append(f"{window}/{return_type} has {len(pairs)} pairs")
+                    result.correlations += found
+                    for c in found:
+                        store.upsert_correlation(
+                            {
+                                "date": iso,
+                                "window": c.window,
+                                "return_type": c.return_type,
+                                "lag": c.lag,
+                                "scope": SCOPE,
+                                "source": c.source,
+                                "method": c.method,
+                                "model": model,
+                                "n": c.n,
+                                "estimate": c.estimate,
+                                "p_value": c.p_value,
+                                "ci_low": c.ci_low,
+                                "ci_high": c.ci_high,
+                                "tickers": ",".join(c.tickers),
+                                "computed_at": computed_at,
+                            }
+                        )
     if thin:
         result.note = "; ".join(thin)
         log.info(result.note)
@@ -327,6 +361,7 @@ class RollingRow:
     window: str
     return_type: str
     lag: int
+    source: str
     scope: str
     ticker: str
     method: str
@@ -341,8 +376,8 @@ def rolling_analysis(
     store: Store, config: Config, as_of: date, tickers: list[str]
 ) -> list[RollingRow]:
     """Correlations over the last 1/3/6/12 months as of ``as_of``: pooled over
-    every (ticker, day) observation, and per ticker over its own series. Rows
-    for ``as_of`` are replaced in the store."""
+    every (ticker, day) observation, and per ticker over its own series, for
+    every source and pooled over sources. Rows for ``as_of`` are replaced."""
     import pandas as pd
 
     model = config.sentiment.model
@@ -351,27 +386,59 @@ def rolling_analysis(
     sessions = sessions_between(months_before(start, 1), as_of)
     index = {d.isoformat(): i for i, d in enumerate(sessions)}
 
-    ws = pd.DataFrame(
-        [
-            tuple(r)
-            for r in store.window_sentiment_between(start.isoformat(), as_of.isoformat(), model)
-        ],
-        columns=["date", "ticker", "window", "n_articles", "mean_score"],
-    )
     rets = pd.DataFrame(
         [tuple(r) for r in store.returns_between(sessions[0].isoformat(), as_of.isoformat())],
         columns=["ticker", "date", *RETURN_TYPES],
     )
     rows: list[RollingRow] = []
-    if ws.empty or rets.empty:
-        store.replace_rolling(as_of.isoformat(), [])
-        return rows
-    ws = ws[ws["ticker"].isin(universe)].copy()
-    ws["s"] = ws["date"].map(index)
-    rets["s"] = rets["date"].map(index)
-    ws = ws.dropna(subset=["s"])
-    rets = rets.dropna(subset=["s"])
+    if not rets.empty:
+        rets["s"] = rets["date"].map(index)
+        rets = rets.dropna(subset=["s"])
+        for source in sources_for_analysis(store):
+            ws = pd.DataFrame(
+                [
+                    tuple(r)
+                    for r in store.window_sentiment_between(
+                        start.isoformat(), as_of.isoformat(), model, source
+                    )
+                ],
+                columns=["date", "ticker", "window", "n_articles", "mean_score"],
+            )
+            if ws.empty:
+                continue
+            ws = ws[ws["ticker"].isin(universe)].copy()
+            ws["s"] = ws["date"].map(index)
+            ws = ws.dropna(subset=["s"])
+            rows += _rolling_rows(ws, rets, as_of, source)
+    computed_at = utc_now_iso()
+    store.replace_rolling(
+        as_of.isoformat(),
+        (
+            (
+                r.months,
+                r.window,
+                r.return_type,
+                r.lag,
+                r.source,
+                r.scope,
+                r.ticker,
+                r.method,
+                r.n,
+                r.estimate,
+                r.p_value,
+                r.ci_low,
+                r.ci_high,
+                computed_at,
+            )
+            for r in rows
+        ),
+    )
+    log.info("rolling as of %s: %d rows", as_of, len(rows))
+    return rows
 
+
+def _rolling_rows(ws, rets, as_of: date, source: str) -> list[RollingRow]:
+    rows: list[RollingRow] = []
     for months in HORIZONS:
         horizon_start = months_before(as_of, months).isoformat()
         w_all = ws[ws["date"] >= horizon_start]
@@ -396,6 +463,7 @@ def rolling_analysis(
                                     window,
                                     return_type,
                                     lag,
+                                    source,
                                     "pooled",
                                     POOLED,
                                     method,
@@ -418,6 +486,7 @@ def rolling_analysis(
                                     window,
                                     return_type,
                                     lag,
+                                    source,
                                     "ticker",
                                     str(ticker),
                                     method,
@@ -428,27 +497,4 @@ def rolling_analysis(
                                     hi,
                                 )
                             )
-    computed_at = utc_now_iso()
-    store.replace_rolling(
-        as_of.isoformat(),
-        (
-            (
-                r.months,
-                r.window,
-                r.return_type,
-                r.lag,
-                r.scope,
-                r.ticker,
-                r.method,
-                r.n,
-                r.estimate,
-                r.p_value,
-                r.ci_low,
-                r.ci_high,
-                computed_at,
-            )
-            for r in rows
-        ),
-    )
-    log.info("rolling as of %s: %d rows", as_of, len(rows))
     return rows

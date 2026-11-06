@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -194,7 +194,62 @@ MIGRATIONS: dict[int, str] = {
         PRIMARY KEY (as_of, months, window, return_type, lag, scope, ticker, method)
     );
     """,
+    5: """
+    CREATE TABLE article_sources (
+        article_id   INTEGER NOT NULL REFERENCES articles (id) ON DELETE CASCADE,
+        source       TEXT NOT NULL,
+        url          TEXT NOT NULL,
+        published_at TEXT,
+        seen_at      TEXT NOT NULL,
+        PRIMARY KEY (article_id, source)
+    );
+    CREATE INDEX idx_article_sources_source ON article_sources (source, article_id);
+    INSERT INTO article_sources (article_id, source, url, published_at, seen_at)
+        SELECT id, source, url, published_at, first_seen_at FROM articles;
+    CREATE TABLE window_sentiment_v5 (
+        date       TEXT NOT NULL,
+        window     TEXT NOT NULL,
+        source     TEXT NOT NULL,
+        ticker     TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        n_articles INTEGER NOT NULL,
+        mean_score REAL NOT NULL,
+        PRIMARY KEY (date, window, source, ticker, model)
+    );
+    INSERT INTO window_sentiment_v5
+        SELECT date, window, 'all', ticker, model, n_articles, mean_score FROM window_sentiment;
+    DROP TABLE window_sentiment;
+    ALTER TABLE window_sentiment_v5 RENAME TO window_sentiment;
+    CREATE TABLE rolling_correlations_v5 (
+        as_of       TEXT NOT NULL,
+        months      INTEGER NOT NULL,
+        window      TEXT NOT NULL,
+        return_type TEXT NOT NULL,
+        lag         INTEGER NOT NULL,
+        source      TEXT NOT NULL,
+        scope       TEXT NOT NULL,
+        ticker      TEXT NOT NULL,
+        method      TEXT NOT NULL,
+        n           INTEGER NOT NULL,
+        estimate    REAL NOT NULL,
+        p_value     REAL NOT NULL,
+        ci_low      REAL,
+        ci_high     REAL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (as_of, months, window, return_type, lag, source, scope, ticker, method)
+    );
+    INSERT INTO rolling_correlations_v5
+        SELECT as_of, months, window, return_type, lag, 'all', scope, ticker, method, n,
+               estimate, p_value, ci_low, ci_high, computed_at
+        FROM rolling_correlations;
+    DROP TABLE rolling_correlations;
+    ALTER TABLE rolling_correlations_v5 RENAME TO rolling_correlations;
+    """,
 }
+
+DEDUP_WINDOW_DAYS = 2
+"""Two articles with the same normalized title published within this many days
+of each other are the same article (seen through different sources)."""
 
 
 def _member(r: sqlite3.Row) -> UniverseMember:
@@ -343,53 +398,100 @@ class Store:
     # -- articles -------------------------------------------------------------
 
     def upsert_article(self, article: Article, ticker: str, seen_at: str) -> tuple[int, bool]:
-        """Insert or merge by URL and link it to ``ticker``.
+        """Insert or merge, and link it to ``ticker``.
 
-        On conflict the earliest ``published_at`` wins and ``first_seen_*`` is
-        never overwritten. Returns ``(article_id, is_new)``.
+        An article is the same article if its URL is known, or if an article
+        with the same normalized title was published within ``DEDUP_WINDOW_DAYS``.
+        On a merge the earliest ``published_at`` wins and ``first_seen_*`` is
+        never overwritten; every source that reported it is recorded in
+        ``article_sources``. Returns ``(article_id, is_new)``.
         """
+        norm = normalize_title(article.title)
         with self.conn:
             self.conn.execute("BEGIN")
-            existing = self.conn.execute(
+            row = self.conn.execute(
                 "SELECT id FROM articles WHERE url = ?", (article.url,)
             ).fetchone()
+            if row is None:
+                row = self._same_title(norm, article.published_at)
+            if row is None:
+                cur = self.conn.execute(
+                    """INSERT INTO articles (url, source_id, title, title_norm, published_at,
+                                             source, provider, content_type, first_seen_at,
+                                             first_seen_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        article.url,
+                        article.source_id,
+                        article.title,
+                        norm,
+                        article.published_at,
+                        article.source,
+                        article.provider,
+                        article.content_type,
+                        seen_at,
+                        article.source,
+                    ),
+                )
+                article_id, is_new = cur.lastrowid, True
+            else:
+                article_id, is_new = row["id"], False
+                self.conn.execute(
+                    """UPDATE articles SET
+                         published_at = CASE
+                           WHEN ? IS NULL THEN published_at
+                           WHEN published_at IS NULL THEN ?
+                           ELSE min(published_at, ?) END,
+                         provider = coalesce(provider, ?),
+                         source_id = coalesce(source_id, ?)
+                       WHERE id = ?""",
+                    (
+                        article.published_at,
+                        article.published_at,
+                        article.published_at,
+                        article.provider,
+                        article.source_id,
+                        article_id,
+                    ),
+                )
             self.conn.execute(
-                """INSERT INTO articles (url, source_id, title, title_norm, published_at, source,
-                                         provider, content_type, first_seen_at, first_seen_source)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT (url) DO UPDATE SET
-                     published_at = CASE
-                       WHEN excluded.published_at IS NULL THEN articles.published_at
-                       WHEN articles.published_at IS NULL THEN excluded.published_at
-                       ELSE min(articles.published_at, excluded.published_at)
-                     END,
-                     provider = coalesce(articles.provider, excluded.provider),
-                     source_id = coalesce(articles.source_id, excluded.source_id)""",
-                (
-                    article.url,
-                    article.source_id,
-                    article.title,
-                    normalize_title(article.title),
-                    article.published_at,
-                    article.source,
-                    article.provider,
-                    article.content_type,
-                    seen_at,
-                    article.source,
-                ),
-            )
-            article_id = (
-                existing["id"]
-                if existing
-                else self.conn.execute(
-                    "SELECT id FROM articles WHERE url = ?", (article.url,)
-                ).fetchone()["id"]
+                """INSERT OR IGNORE INTO article_sources (article_id, source, url, published_at,
+                                                          seen_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (article_id, article.source, article.url, article.published_at, seen_at),
             )
             self.conn.execute(
                 "INSERT OR IGNORE INTO article_tickers (article_id, ticker) VALUES (?, ?)",
                 (article_id, ticker),
             )
-        return article_id, existing is None
+        return article_id, is_new
+
+    def _same_title(self, title_norm: str, published_at: str | None) -> sqlite3.Row | None:
+        if not title_norm:
+            return None
+        if published_at is None:
+            return self.conn.execute(
+                "SELECT id FROM articles WHERE title_norm = ? ORDER BY id LIMIT 1", (title_norm,)
+            ).fetchone()
+        from datetime import timedelta
+
+        from murmur.clock import parse_utc, to_utc_iso
+
+        stamp = parse_utc(published_at)
+        lo = to_utc_iso(stamp - timedelta(days=DEDUP_WINDOW_DAYS))
+        hi = to_utc_iso(stamp + timedelta(days=DEDUP_WINDOW_DAYS))
+        return self.conn.execute(
+            """SELECT id FROM articles
+               WHERE title_norm = ? AND (published_at IS NULL OR published_at BETWEEN ? AND ?)
+               ORDER BY id LIMIT 1""",
+            (title_norm, lo, hi),
+        ).fetchone()
+
+    def sources_seen(self) -> list[str]:
+        return [
+            r[0]
+            for r in self.conn.execute("SELECT DISTINCT source FROM article_sources ORDER BY 1")
+        ]
 
     def unscored_articles(self, model: str) -> list[tuple[int, str]]:
         rows = self.conn.execute(
@@ -407,6 +509,7 @@ class Store:
             "companies",
             "articles",
             "article_tickers",
+            "article_sources",
             "prices",
             "sentiment",
             "window_sentiment",
@@ -438,10 +541,14 @@ class Store:
         return self.conn.execute(
             """SELECT a.id, a.url, a.title, a.published_at, a.trading_day, a.window, a.source,
                       a.provider, a.content_type, a.first_seen_at,
-                      group_concat(t.ticker, ',') AS tickers
-               FROM articles a JOIN article_tickers t ON t.article_id = a.id
+                      (SELECT group_concat(ticker, ',') FROM article_tickers
+                        WHERE article_id = a.id) AS tickers,
+                      (SELECT group_concat(source, ',') FROM (
+                         SELECT source FROM article_sources
+                         WHERE article_id = a.id ORDER BY seen_at, rowid)) AS sources
+               FROM articles a
                WHERE a.trading_day = ?
-               GROUP BY a.id ORDER BY a.published_at, a.id""",
+               ORDER BY a.published_at, a.id""",
             (trading_day,),
         ).fetchall()
 
@@ -521,41 +628,62 @@ class Store:
         ).fetchall()
 
     def ticker_scores(
-        self, trading_day: str, windows: tuple[str, ...], model: str
+        self, trading_day: str, windows: tuple[str, ...], model: str, source: str = "all"
     ) -> dict[str, tuple[int, float]]:
-        """``ticker -> (n_articles, mean_score)`` over the given windows of a trading day."""
+        """``ticker -> (n_articles, mean_score)`` over the given windows of a trading
+        day; ``source`` restricts to articles that source reported."""
         marks = ",".join("?" * len(windows))
+        join = (
+            ""
+            if source == "all"
+            else "JOIN article_sources src ON src.article_id = a.id AND src.source = ?"
+        )
+        params = (
+            (model, trading_day, *windows)
+            if source == "all"
+            else (source, model, trading_day, *windows)
+        )
         rows = self.conn.execute(
             f"""SELECT t.ticker, count(*) AS n, avg(s.score) AS mean_score
                 FROM sentiment s
                 JOIN articles a ON a.id = s.article_id
                 JOIN article_tickers t ON t.article_id = a.id
+                {join}
                 WHERE s.model = ? AND a.trading_day = ? AND a.window IN ({marks})
                 GROUP BY t.ticker""",
-            (model, trading_day, *windows),
+            params,
         )
         return {r["ticker"]: (r["n"], r["mean_score"]) for r in rows}
 
     # -- analysis results -----------------------------------------------------
 
     def upsert_window_sentiment(
-        self, date: str, window: str, model: str, per_ticker: dict[str, tuple[int, float]]
+        self,
+        date: str,
+        window: str,
+        model: str,
+        per_ticker: dict[str, tuple[int, float]],
+        source: str = "all",
     ) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
+            self.conn.execute(
+                "DELETE FROM window_sentiment "
+                "WHERE date = ? AND window = ? AND source = ? AND model = ?",
+                (date, window, source, model),
+            )
             self.conn.executemany(
-                """INSERT INTO window_sentiment (date, window, ticker, model, n_articles,
+                """INSERT INTO window_sentiment (date, window, source, ticker, model, n_articles,
                                                  mean_score)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT (date, window, ticker, model) DO UPDATE SET
-                     n_articles = excluded.n_articles, mean_score = excluded.mean_score""",
-                [(date, window, t, model, n, mean) for t, (n, mean) in per_ticker.items()],
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [(date, window, source, t, model, n, mean) for t, (n, mean) in per_ticker.items()],
             )
 
     def window_sentiment_on(self, date: str, model: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT date, window, ticker, model, n_articles, mean_score FROM window_sentiment
-               WHERE date = ? AND model = ? ORDER BY ticker, window""",
+            """SELECT date, window, source, ticker, model, n_articles, mean_score
+               FROM window_sentiment
+               WHERE date = ? AND model = ? ORDER BY source, ticker, window""",
             (date, model),
         ).fetchall()
 
@@ -584,11 +712,14 @@ class Store:
             (start, end),
         ).fetchall()
 
-    def window_sentiment_between(self, start: str, end: str, model: str) -> list[sqlite3.Row]:
+    def window_sentiment_between(
+        self, start: str, end: str, model: str, source: str = "all"
+    ) -> list[sqlite3.Row]:
         return self.conn.execute(
             """SELECT date, ticker, window, n_articles, mean_score FROM window_sentiment
-               WHERE model = ? AND date >= ? AND date <= ? ORDER BY date, ticker, window""",
-            (model, start, end),
+               WHERE model = ? AND source = ? AND date >= ? AND date <= ?
+               ORDER BY date, ticker, window""",
+            (model, source, start, end),
         ).fetchall()
 
     def days_with_returns(self) -> list[str]:
@@ -596,26 +727,27 @@ class Store:
 
     def replace_rolling(self, as_of: str, rows: Iterable[tuple]) -> int:
         """Replace every rolling row for ``as_of`` with ``rows`` (``(months, window,
-        return_type, lag, scope, ticker, method, n, estimate, p_value, ci_low, ci_high,
-        computed_at)``)."""
+        return_type, lag, source, scope, ticker, method, n, estimate, p_value, ci_low,
+        ci_high, computed_at)``)."""
         rows = list(rows)
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.execute("DELETE FROM rolling_correlations WHERE as_of = ?", (as_of,))
             self.conn.executemany(
                 """INSERT INTO rolling_correlations (as_of, months, window, return_type, lag,
-                       scope, ticker, method, n, estimate, p_value, ci_low, ci_high, computed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       source, scope, ticker, method, n, estimate, p_value, ci_low, ci_high,
+                       computed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [(as_of, *r) for r in rows],
             )
         return len(rows)
 
     def rolling_on(self, as_of: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT as_of, months, window, return_type, lag, scope, ticker, method, n,
+            """SELECT as_of, months, window, return_type, lag, source, scope, ticker, method, n,
                       estimate, p_value, ci_low, ci_high, computed_at
                FROM rolling_correlations WHERE as_of = ?
-               ORDER BY months, window, return_type, lag, scope, ticker, method""",
+               ORDER BY months, window, return_type, lag, source, scope, ticker, method""",
             (as_of,),
         ).fetchall()
 

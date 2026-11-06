@@ -1,0 +1,6 @@
+[
+ {"category": "company", "datetime": 1793890800, "headline": "Apple beats estimates on record iPhone demand", "id": 140001, "image": "", "related": "AAPL", "source": "Reuters", "summary": "...", "url": "https://www.reuters.com/apple-beats"},
+ {"category": "company", "datetime": 1793836800, "headline": "Apple (AAPL) Stock Could Be 30% Overvalued Despite Record iPhone Sales", "id": 140002, "image": "", "related": "AAPL", "source": "Yahoo", "summary": "...", "url": "https://finnhub.example/140002"},
+ {"category": "company", "datetime": null, "headline": "Undated note", "id": 140003, "related": "AAPL", "source": "X", "url": "https://finnhub.example/140003"},
+ {"category": "company", "datetime": 1793836000, "headline": "", "id": 140004, "related": "AAPL", "source": "X", "url": "https://finnhub.example/140004"}
+]

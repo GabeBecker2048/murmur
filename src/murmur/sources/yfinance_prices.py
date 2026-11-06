@@ -82,18 +82,29 @@ class YfinancePrices:
         self.period = period
 
     def fetch(self, tickers: Iterable[str]) -> list[PriceBar]:
+        return self._download(tickers, period=self.period)
+
+    def fetch_range(self, tickers: Iterable[str], start: date, end: date) -> list[PriceBar]:
+        from datetime import timedelta
+
+        # yfinance's end is exclusive
+        return self._download(
+            tickers, start=start.isoformat(), end=(end + timedelta(days=1)).isoformat()
+        )
+
+    def _download(self, tickers: Iterable[str], **when) -> list[PriceBar]:
         import yfinance as yf
 
         symbols = {yahoo_symbol(t): t for t in tickers}
         df = yf.download(
             list(symbols),
-            period=self.period,
             interval="1d",
             auto_adjust=False,
             actions=False,
             group_by="ticker",
             progress=False,
             threads=True,
+            **when,
         )
         drop = partial_bar_date(datetime.now(ZoneInfo(self.tz)), self.tz)
         if drop is not None:

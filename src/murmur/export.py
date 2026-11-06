@@ -43,6 +43,7 @@ COLUMNS = {
         "content_type",
         "first_seen_at",
         "tickers",
+        "sources",
     ],
     "prices": ["ticker", "date", "open", "high", "low", "close", "adj_close", "volume", "source"],
     "returns": [
@@ -71,6 +72,7 @@ COLUMNS = {
     ],
     "window_sentiment": [
         "date",
+        "source",
         "ticker",
         "window",
         "n_articles",
@@ -102,6 +104,7 @@ COLUMNS = {
         "window",
         "return_type",
         "lag",
+        "source",
         "scope",
         "ticker",
         "method",
@@ -119,7 +122,7 @@ KEYS = {
     "prices": ["ticker", "date"],
     "returns": ["ticker", "date"],
     "sentiment": ["article_id", "ticker", "model"],
-    "window_sentiment": ["date", "ticker", "window"],
+    "window_sentiment": ["date", "source", "ticker", "window"],
     "correlations": ["date", "window", "return_type", "lag", "scope", "source", "method", "model"],
     "rolling_correlations": [
         "as_of",
@@ -127,6 +130,7 @@ KEYS = {
         "window",
         "return_type",
         "lag",
+        "source",
         "scope",
         "ticker",
         "method",
@@ -214,6 +218,7 @@ def _per_ticker_table(store: Store, iso: str, model: str) -> list[tuple]:
         rows.append(
             (
                 iso,
+                r["source"],
                 r["ticker"],
                 r["window"],
                 r["n_articles"],
@@ -227,8 +232,9 @@ def _per_ticker_table(store: Store, iso: str, model: str) -> list[tuple]:
 
 
 def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> list[Path]:
-    # per_ticker columns: date, ticker, window, n_articles, mean_score, overnight, intraday, daily
-    day_rows = [r for r in per_ticker if r[2] == DAY]
+    # per_ticker columns: date, source, ticker, window, n_articles, mean_score, overnight,
+    # intraday, daily; the charts use the pooled ('all') rows of the day window
+    day_rows = [r[:1] + r[2:] for r in per_ticker if r[3] == DAY and r[1] == "all"]
     if not day_rows:
         return []
     import matplotlib
@@ -272,7 +278,11 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
             (
                 c
                 for c in correlations
-                if c["method"] == "pearson" and c["window"] == DAY and c["return_type"] == "daily"
+                if c["method"] == "pearson"
+                and c["window"] == DAY
+                and c["return_type"] == "daily"
+                and c["lag"] == 0
+                and c["source"] == "all"
             ),
             None,
         )
@@ -299,7 +309,11 @@ def _leadlag_chart(base: Path, day: date, rolling) -> list[Path]:
     that has every lag."""
     from murmur.analysis import HORIZONS, MATCHED_PAIRS
 
-    pooled = [r for r in rolling if r["scope"] == "pooled" and r["method"] == "pearson"]
+    pooled = [
+        r
+        for r in rolling
+        if r["scope"] == "pooled" and r["method"] == "pearson" and r["source"] == "all"
+    ]
     if not pooled:
         return []
     by_h: dict[int, dict[tuple[str, str, int], sqlite3.Row]] = {}

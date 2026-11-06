@@ -37,6 +37,9 @@ class FakePrices:
     def __init__(self, empty=False):
         self.empty = empty
 
+    def fetch_range(self, tickers, start, end):
+        return self.fetch(tickers)
+
     def fetch(self, tickers):
         if self.empty:
             return []
@@ -148,8 +151,11 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
         # Nov 4: everything but the bars for the 4th itself -> analyze fails that day
         pipeline.run_universe(store, cfg, nov4)
         for t, (_, _, _, _, _, headline) in COMPANIES.items():  # FakeNews dates everything Nov 5
+            # a distinct title: the same title a day apart would be deduplicated into one
             store.upsert_article(
-                Article(f"https://e/{t}/4", headline, "2026-11-04T15:00:00Z", "f"), t, "t"
+                Article(f"https://e/{t}/4", f"Wednesday: {headline}", "2026-11-04T15:00:00Z", "f"),
+                t,
+                "t",
             )
         for t, (_, _, _, close, _, _) in COMPANIES.items():  # Nov 3 close != Nov 4 close
             store.upsert_prices([PriceBar(t, "2026-11-03", close, None, None, close, None, 1)], "t")
@@ -185,15 +191,15 @@ def test_news_requires_a_recorded_universe(cfg):
 def test_one_failing_ticker_is_tolerated_all_failing_is_not(cfg):
     with Store(cfg.store_path) as store:
         pipeline.run_universe(store, cfg, DAY)
-        summary = pipeline.run_news(store, cfg, DAY, FakeNews(fail_for={"META"}))
+        summary = pipeline.run_news(store, cfg, DAY, [FakeNews(fail_for={"META"})])
         assert "1 tickers failed" in summary
         assert store.count("articles") == 4
         with pytest.raises(RuntimeError):
-            pipeline.run_news(store, cfg, DAY, FakeNews(fail_for=set(COMPANIES)))
+            pipeline.run_news(store, cfg, DAY, [FakeNews(fail_for=set(COMPANIES))])
 
 
 def test_cli_run_and_subcommands(cfg, monkeypatch, capsys):
-    monkeypatch.setattr(pipeline, "default_news_source", lambda c: FakeNews())
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [FakeNews()])
     monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
     monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
     assert cli.main(["-c", str(cfg.source_path), "run", "--date", "2026-11-05"]) == 0
@@ -214,7 +220,7 @@ def test_cli_run_and_subcommands(cfg, monkeypatch, capsys):
 
 
 def test_cli_exit_codes(cfg, monkeypatch, capsys):
-    monkeypatch.setattr(pipeline, "default_news_source", lambda c: FakeNews())
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [FakeNews()])
     monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices(empty=True))
     monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
     assert cli.main(["-c", str(cfg.source_path), "run", "--date", "2026-11-05"]) == 1
@@ -225,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.4.0" in capsys.readouterr().out
+    assert "murmur 0.5.0" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):
@@ -234,7 +240,9 @@ def test_previous_session_is_reanalysed_and_reexported(cfg):
         pipeline.run_universe(store, cfg, date(2026, 11, 4))
         for t, (_, _, _, close, _, headline) in COMPANIES.items():
             store.upsert_article(
-                Article(f"https://e/{t}/4", headline, "2026-11-04T15:00:00Z", "f"), t, "t"
+                Article(f"https://e/{t}/4", f"Wednesday: {headline}", "2026-11-04T15:00:00Z", "f"),
+                t,
+                "t",
             )
             store.upsert_prices([PriceBar(t, "2026-11-03", close, None, None, close, None, 1)], "t")
         store.upsert_prices(FakePrices().fetch(list(COMPANIES)), "t")
@@ -249,7 +257,7 @@ def test_previous_session_is_reanalysed_and_reexported(cfg):
 
 
 def test_analyze_all(cfg, monkeypatch, capsys):
-    monkeypatch.setattr(pipeline, "default_news_source", lambda c: FakeNews())
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [FakeNews()])
     monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
     monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
     assert cli.main(["-c", str(cfg.source_path), "run", "--date", "2026-11-05"]) == 0
@@ -259,3 +267,83 @@ def test_analyze_all(cfg, monkeypatch, capsys):
     assert "re-analysed 1 days" in capsys.readouterr().out
     with Store(cfg.store_path) as store:
         assert store.count("correlations") == 12
+
+
+class FakeRangeNews:
+    name = "fakerange"
+    supports_range = True
+
+    def __init__(self, fail_for=()):
+        self.calls = []
+        self.fail_for = set(fail_for)
+
+    def fetch(self, ticker):
+        return self.fetch_range(ticker, date(2026, 11, 5), date(2026, 11, 5))
+
+    def fetch_range(self, ticker, start, end):
+        if ticker in self.fail_for:
+            raise OSError("boom")
+        self.calls.append((ticker, start, end))
+        return [
+            Article(
+                f"https://r/{ticker}/{start}",
+                f"{ticker} surges {start}",
+                f"{start}T15:00:00Z",
+                self.name,
+            )
+        ]
+
+
+def test_two_news_sources_are_ingested_and_counted(cfg):
+    with Store(cfg.store_path) as store:
+        pipeline.run_universe(store, cfg, DAY)
+        summary = pipeline.run_news(store, cfg, DAY, [FakeNews(), FakeRangeNews()])
+        assert "fake-news: 8 articles" in summary and "fakerange: 4 articles, 4 new" in summary
+        assert store.sources_seen() == ["fake-news", "fakerange"]
+        with pytest.raises(RuntimeError, match="fakerange failed for every ticker"):
+            pipeline.run_news(store, cfg, DAY, [FakeNews(), FakeRangeNews(fail_for=set(COMPANIES))])
+
+
+def test_backfill_news_chunks_by_week_and_needs_a_ranged_source(cfg):
+    with Store(cfg.store_path) as store:
+        src = FakeRangeNews()
+        summary = pipeline.backfill_news(
+            store, cfg, date(2026, 10, 1), date(2026, 10, 20), [FakeNews(), src]
+        )
+        assert summary.startswith("2026-10-01..2026-10-20: fakerange: 12 articles, 12 new")
+        assert [c[1:] for c in src.calls if c[0] == "AAPL"] == [
+            (date(2026, 10, 1), date(2026, 10, 7)),
+            (date(2026, 10, 8), date(2026, 10, 14)),
+            (date(2026, 10, 15), date(2026, 10, 20)),
+        ]
+        with pytest.raises(RuntimeError, match="needs a source with date ranges"):
+            pipeline.backfill_news(store, cfg, date(2026, 10, 1), date(2026, 10, 2), [FakeNews()])
+
+
+def test_backfill_prices_uses_the_range(cfg):
+    class RangePrices:
+        name = "rp"
+
+        def fetch(self, tickers):
+            raise AssertionError("fetch should not be used for a backfill")
+
+        def fetch_range(self, tickers, start, end):
+            self.seen = (start, end)
+            return [PriceBar(t, "2026-10-02", 1, 1, 1, 2, None, 1) for t in tickers]
+
+    with Store(cfg.store_path) as store:
+        src = RangePrices()
+        summary = pipeline.backfill_prices(store, cfg, date(2026, 10, 1), date(2026, 10, 2), src)
+        assert src.seen == (date(2026, 10, 1), date(2026, 10, 2))
+        assert "4 bars for 4/4 tickers" in summary
+        assert store.count("prices") == 4
+
+
+def test_cli_backfill_flags(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(pipeline, "default_news_sources", lambda c, names: [FakeRangeNews()])
+    monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
+    assert (
+        cli.main(["-c", str(cfg.source_path), "news", "--from", "2026-11-03", "--to", "2026-11-04"])
+        == 0
+    )
+    assert "2026-11-03..2026-11-04" in capsys.readouterr().out
