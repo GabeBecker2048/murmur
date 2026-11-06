@@ -1,6 +1,6 @@
-# Copy to ./murmur.toml (gitignored) or point MURMUR_CONFIG / --config at it.
+# Copy to ./murmur.toml (gitignored), or point MURMUR_CONFIG / --config at it.
 # Only the keys you set are overridden; see src/murmur/default_config.toml
-# for everything available.
+# for everything available. An empty file is valid and means "all defaults".
 
 data_dir = "data"
 
@@ -8,4 +8,13 @@ data_dir = "data"
 max_articles = 20
 
 [sentiment]
-batch_size = 32
+device = "cpu"              # "cuda" or "auto" on a machine with a GPU build of torch
+
+[universe]
+source = "marketcap"        # or "static" to use [universe.static] from the defaults
+size = 100
+
+[schedule]
+time = "18:00"              # America/New_York, every day
+retries = 3
+retry_delay_minutes = 20
