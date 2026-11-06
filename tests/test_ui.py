@@ -45,7 +45,7 @@ def test_shell_for_ui_routes_only(client):  # noqa: F811
 def test_static_files_and_cache_headers(client):  # noqa: F811
     app = client.get("/static/app.js")
     assert app.status_code == 200 and "javascript" in app.headers["content-type"]
-    assert app.headers["cache-control"] == "public, max-age=300"
+    assert app.headers["cache-control"] == "no-cache"
     vendor = client.get("/static/vendor/plotly-basic.min.js")
     assert vendor.status_code == 200 and "immutable" in vendor.headers["cache-control"]
     assert vendor.text.startswith("/**") and "plotly.js" in vendor.text[:120]

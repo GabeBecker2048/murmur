@@ -290,6 +290,8 @@ async function runsTable() {
 
 // ---- settings ---------------------------------------------------------------------
 
+let settingsFlash = null;
+
 async function renderSettings({ body }) {
   const schema = (await api("settings/schema")).keys || [];
   const groups = {};
@@ -340,7 +342,7 @@ async function renderSettings({ body }) {
     save.disabled = true;
     try {
       await api("settings", { method: "PUT", body: patch, auth: true });
-      msg.textContent = `Saved ${n} setting${n > 1 ? "s" : ""}.`;
+      settingsFlash = `Saved ${n} setting${n > 1 ? "s" : ""}. ${Object.keys(patch).join(", ")} updated.`;
       navigate("/admin/settings", { replace: true });
     } catch (e) {
       msg.textContent = e.message;
@@ -348,7 +350,9 @@ async function renderSettings({ body }) {
       save.disabled = false;
     }
   } }, el("div", { class: "stack" }, ...sections), el("div", { class: "actions" }, save, msg));
-  clear(body).append(el("div", { class: "notice", text: "Changes are written to settings.toml in the data directory, above the ops file and below the environment. Secrets and the data directory can only be set in the environment." }), form);
+  const flash = settingsFlash ? notice(settingsFlash) : null;
+  settingsFlash = null;
+  clear(body).append(flash, el("div", { class: "notice", text: "Changes are written to settings.toml in the data directory, above the ops file and below the environment. Secrets and the data directory can only be set in the environment." }), form);
 }
 
 function control(k) {

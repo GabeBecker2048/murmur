@@ -62,7 +62,7 @@ export async function render(main, parts, query) {
       { label: "News window", value: (r) => WINDOW_LABEL[r.window] || r.window },
       { label: "Return", value: (r) => RETURN_LABEL[r.return_type] || r.return_type },
       { label: "Lag", value: (r) => `${r.lag > 0 ? "+" : ""}${r.lag} · ${LAG_LABEL[r.lag]}` },
-      { label: f.method === "spearman" ? "ρ" : "r", num: true, value: cell },
+      { label: f.method === "spearman" ? "Spearman rho" : "Pearson r", num: true, value: cell },
       { label: "95 % CI", num: true, value: (r) => (r.ci_low === null ? "–" : `${fmt.r2(r.ci_low)} … ${fmt.r2(r.ci_high)}`) },
       { label: "p", num: true, value: (r) => fmt.p(r.p_value) },
       { label: "n", num: true, value: (r) => fmt.int(r.n) },

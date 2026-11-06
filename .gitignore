@@ -22,3 +22,4 @@ murmur.toml
 # API keys for the optional sources
 .env
 ui-shots/
+ui-review/

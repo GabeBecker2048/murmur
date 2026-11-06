@@ -59,8 +59,11 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
   series, 2px lines, >= 8px markers, category x-axis for <= 10 points). Pages under
   `pages/` export `render(main, parts, query)` and may return `{destroy}` to stop timers.
   The series colors are the validated reference palette (blue/orange/aqua for the three
-  matched pairs; status colors only for job states). Verify visually with the Playwright
-  sweep in `scripts/ui_shots.py` (headless Chromium, both themes, desktop + phone).
+  matched pairs; status colors only for job states). Verify in a browser before shipping UI
+  changes: `scripts/ui_shots.py` (screenshots of every page, both themes, desktop + phone)
+  and `scripts/ui_review.py` (clicks through every control and admin flow; drives a visible
+  Brave/Chrome over CDP on port 9222 when one is running, else headless Chromium). Our
+  static files are served `no-cache` so a release never leaves stale modules in a browser.
 
 ## Commands
 

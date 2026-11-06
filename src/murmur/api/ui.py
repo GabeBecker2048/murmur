@@ -21,8 +21,9 @@ def static_dir() -> Path:
 
 
 class UiStatic(StaticFiles):
-    """Long cache for the vendored library (its name carries the version), a short
-    one for our own files, which change with every release."""
+    """Long cache for the vendored library (its version is pinned in vendor/README.md);
+    our own files are revalidated on every load (ETag/304), so a release never leaves a
+    browser running a stale module next to a new shell."""
 
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
@@ -30,7 +31,7 @@ class UiStatic(StaticFiles):
         if "/vendor/" in path or path.startswith("vendor/"):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         else:
-            response.headers["Cache-Control"] = "public, max-age=300"
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
 
