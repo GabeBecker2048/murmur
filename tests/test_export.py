@@ -77,6 +77,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     }
     assert entries["2026/11/universe.parquet"]["date"] == "2026-11"
     assert entries["2026/11/05/sentiment.png"]["format"] == "png"
+    assert entries["2026/11/05/sentiment.png"]["table"] == "charts"
     assert "index.json" not in entries
 
 

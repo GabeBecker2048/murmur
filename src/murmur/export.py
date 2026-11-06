@@ -325,7 +325,7 @@ def _entry(base: Path, path: Path) -> dict:
     else:
         day = f"{parts[0]}-{parts[1]}-{parts[2]}"
     return {
-        "table": rel.stem,
+        "table": "charts" if path.suffix == ".png" else rel.stem,
         "date": day,
         "path": rel.as_posix(),
         "format": path.suffix.lstrip("."),
