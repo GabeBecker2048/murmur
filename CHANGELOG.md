@@ -19,11 +19,15 @@ needs.
 - Per-window sentiment (`window_sentiment`) and correlations per
   window/return pair at lag 0 (`correlations` now keyed by window,
   return type and lag).
-- Parquet export for articles, prices, returns and sentiment, one file per
-  trading day, compacted into one file per month once the month is over.
-  CSV stays for the universe and the daily analysis. `murmur export --all`
-  rebuilds the published tree.
+- Parquet export, date first: `YYYY/MM/DD/<table>.parquet` for articles,
+  prices, returns, sentiment, window_sentiment and correlations, plus the two
+  charts; `YYYY/MM/universe.parquet` per month; finished months compacted into
+  `YYYY/MM/<table>.parquet`. No CSV anywhere. `murmur export --all` rebuilds
+  the tree.
 - `murmur analyze` prints every correlation with its confidence interval.
+- Releases: `scripts/release.sh X.Y.Z` pushes a tag; the release workflow
+  tests, builds, pushes the image as `X.Y.Z` and `latest`, and creates the
+  GitHub release from this file. Merges to `main` no longer publish an image.
 
 ### Changed
 
@@ -36,7 +40,7 @@ needs.
 
 ### Removed
 
-- The CSV versions of the large tables in `data/published/`.
+- CSV output and the `table/YYYY/MM/DD` layout from 0.1.0.
 
 ## [0.2.0] - 2026-11-05
 

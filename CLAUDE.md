@@ -11,6 +11,14 @@ section before changing schema, timing, sources or the published layout. `CHANGE
 records what shipped. The repo is private and is never published to PyPI
 (`Private :: Do Not Upload` classifier).
 
+## Releasing
+
+`./scripts/release.sh X.Y.Z` from an up-to-date `main` (after the PR that bumps
+`pyproject.toml` and adds the `## [X.Y.Z]` CHANGELOG section has merged). It pushes the tag;
+`.github/workflows/release.yml` tests, builds, pushes `ghcr.io/gabebecker2048/murmur:X.Y.Z`
+and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
+and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
+
 ## Commands
 
 ```bash
@@ -71,9 +79,11 @@ are gitignored.
   intraday/intraday, day/daily), Pearson (+CI) and Spearman, join **by ticker**. A non-trading
   day stores nothing (its news belongs to the next session); a trading day with no bars raises
   so the scheduler retries. 0.4.0 adds lags and the full cross product.
-- `export.py` Parquet (pandas + pyarrow) for `PARQUET_TABLES`, one file per trading day;
-  `compact_finished_months` folds every month before the current one into `table/YYYY/MM.parquet`
-  (dedup by `KEYS`); CSV for universe and `analysis/daily`; `index.json` entries
+- `export.py` Parquet only (pandas + pyarrow). Date-first layout: `YYYY/MM/DD/<table>.parquet`
+  for every table in `DAY_TABLES` plus the two PNGs, `YYYY/MM/universe.parquet` per month.
+  `compact_finished_months` folds every month before the current one into
+  `YYYY/MM/<table>.parquet` (dedup by `KEYS`), leaving only charts in the day dirs. A table
+  with no rows is not written (stale file removed). `index.json` entries
   `{table, date, path, format, rows}`. `export_day(..., today=)` is injectable for tests.
 
 ## Rules that tests enforce

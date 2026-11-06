@@ -156,40 +156,48 @@ Tickers everywhere use the SEC and Yahoo form with a dash (`BRK-B`).
 ## Data
 
 `data/murmur.sqlite` is the source of truth. `murmur export` writes a trading
-day's files under `data/published/` in the layout the roadmap fixes for the
-public dataset; `murmur export --all` rebuilds the whole tree from the store.
+day's files under `data/published/`, date first, one Parquet file per table;
+`murmur export --all` rebuilds the whole tree from the store.
 
 ```
-index.json                                 every file: table, date, path, format, rows
-universe/2026-11.csv                       the month's universe
-articles/2026/11/05.parquet                articles of the trading day, with window
-prices/2026/11/05.parquet                  OHLCV bars
-returns/2026/11/05.parquet                 overnight, intraday, daily per ticker
-sentiment/2026/11/05.parquet               per-headline scores with ticker and window
-articles/2026/10.parquet                   a finished month, compacted into one file
-analysis/daily/2026/11/05.csv              correlations for the day (window x return)
-analysis/daily/2026/11/05-tickers.csv      per-ticker, per-window sentiment and returns
-analysis/daily/2026/11/05-sentiment.png
-analysis/daily/2026/11/05-correlation.png
+index.json                              every file: table, date, path, format, rows
+2026/11/universe.parquet                the month's universe (rank, ticker, name, market cap, CIK)
+2026/11/05/articles.parquet             the trading day's articles, with window
+2026/11/05/prices.parquet               OHLCV bars
+2026/11/05/returns.parquet              overnight, intraday, daily per ticker
+2026/11/05/sentiment.parquet            per-headline scores with ticker and window
+2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns
+2026/11/05/correlations.parquet         the day's correlations (window x return)
+2026/11/05/sentiment.png, correlation.png
+2026/10/prices.parquet ...              a finished month, compacted into one file per table
 ```
 
-The large tables are Parquet, one file per trading day, folded into one file
-per month once the month is over (a later backfill is merged in on the next
-export). Articles with no publication time are stored but not exported or
-analysed. `pandas.read_parquet` or DuckDB read the tree directly.
+Once a month is over its daily files are folded into one file per table in
+the month directory (a later backfill is merged in on the next export); the
+charts stay in the day directories. A file with no rows is never written, and
+articles with no publication time are stored but not exported or analysed.
+`pandas.read_parquet` or DuckDB read the tree directly.
 
-## Deploy
+## Release and deploy
 
-The image is built by CI and pushed to `ghcr.io/gabebecker2048/murmur` on
-every push to `main` (and `vX.Y.Z` tags). `docker-compose.yml` is written for
-the server's conventions: a stack directory with `./data` (store, exports,
-heartbeat, Hugging Face cache) and `./config/murmur.toml` (may be empty),
-uid 1000, read-only root filesystem, no ports.
+A release is a tag. After the version bump and `CHANGELOG.md` entry are
+merged, run `./scripts/release.sh X.Y.Z` from an up-to-date `main`: it checks
+everything, pushes `vX.Y.Z`, and the release workflow runs the suite, builds
+the image, pushes it to `ghcr.io/gabebecker2048/murmur` as `X.Y.Z` and
+`latest`, and creates the GitHub release from the changelog entry. Pull
+requests and merges only build and smoke-test the image.
+
+The server pulls `latest` every morning, so a release is what deploys.
+`docker-compose.yml` is written for the server's conventions: a stack
+directory with `./data` (store, exports, heartbeat, Hugging Face cache) and
+`./config/murmur.toml` (may be empty), uid 1000, read-only root filesystem,
+no ports.
 
 ```bash
 mkdir -p ~/murmur/data ~/murmur/config && cd ~/murmur
 touch config/murmur.toml                      # or set overrides
 curl -O https://raw.githubusercontent.com/GabeBecker2048/murmur/main/docker-compose.yml
+docker login ghcr.io -u <github user>            # once; the package is private
 docker compose pull && docker compose up -d
 docker compose logs -f                        # first run downloads FinBERT into ./data/hf-cache
 docker compose exec murmur murmur runs        # the run log
