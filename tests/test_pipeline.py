@@ -75,7 +75,9 @@ def test_run_all_end_to_end_and_idempotent(cfg):
         assert store.count("article_tickers") == 8
         assert store.count("prices") == 8
         assert store.count("sentiment") == 5
-        assert store.count("universe_membership") == 4
+        assert len(store.universe_for("2026-11-05")) == 4
+        # the 4th had bars and no correlation, so it was backfilled (membership recorded too)
+        assert len(store.universe_for("2026-11-04")) == 4
         assert store.count("correlations") == 2
         assert "pearson" in results[4].summary
 
@@ -133,6 +135,37 @@ def test_run_day_records_the_run(cfg):
         assert not store.successful_run_exists("2026-11-06")
         stages = json.loads(runs[0]["stages"])
         assert [s["name"] for s in stages][:2] == ["universe", "news"]
+
+
+def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
+    """Yahoo's daily bar can vanish in the evening; the next day's run finishes
+    the analysis once bars are back."""
+    nov4, nov5 = date(2026, 11, 4), date(2026, 11, 5)
+    with Store(cfg.store_path) as store:
+        # Nov 4: everything but the bars for the 4th itself -> analyze fails that day
+        pipeline.run_universe(store, cfg, nov4)
+        pipeline.run_news(store, cfg, nov4, FakeNews())
+        for t, (_, _, prev_close, _) in COMPANIES.items():
+            store.upsert_prices(
+                [PriceBar(t, "2026-11-03", None, None, None, prev_close, None, None)], "t"
+            )
+        pipeline.run_sentiment(store, cfg, FakeScorer())
+        with pytest.raises(RuntimeError, match="no price bars"):
+            pipeline.run_analyze(store, cfg, nov4)
+        assert store.correlations_on("2026-11-04") == []
+
+        # Nov 5's run fetches a month of bars (now including the 4th) and backfills
+        results = pipeline.run_all(store, cfg, nov5, FakeNews(), FakePrices(), FakeScorer())
+        by_name = {r.name: r for r in results}
+        assert all(r.ok for r in results), [r.summary for r in results]
+        assert "2026-11-04" in by_name["analyze"].summary.split("backfilled ")[1]
+        assert len(store.correlations_on("2026-11-04")) == 2
+        assert len(store.correlations_on("2026-11-05")) == 2
+        assert (cfg.published_dir / "analysis/daily/2026/11/04.csv").exists()
+        assert (cfg.published_dir / "analysis/daily/2026/11/05.csv").exists()
+
+        # nothing left to backfill
+        assert pipeline.backfill_days(store, nov5) == []
 
 
 def test_news_requires_a_recorded_universe(cfg):

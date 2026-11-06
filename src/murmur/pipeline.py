@@ -8,11 +8,11 @@ import logging
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from murmur.analysis import DayResult, analyze_day
-from murmur.clock import utc_now_iso
+from murmur.clock import is_trading_day, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
 from murmur.sentiment import SentimentScorer, score_pending
@@ -21,6 +21,12 @@ from murmur.store import Store
 from murmur.universe import UniverseSource, applicable_month, membership_for
 
 log = logging.getLogger(__name__)
+
+BACKFILL_DAYS = 7
+"""How many calendar days back the analyze stage looks for trading days whose
+correlation is missing but whose price bars have since arrived. Yahoo's daily
+bar for a day can vanish for a while in the evening, so the day's own run may
+fail analyze; the next day's run completes it."""
 
 
 def default_news_source(config: Config) -> NewsSource:
@@ -113,12 +119,41 @@ def run_sentiment(store: Store, config: Config, scorer: SentimentScorer | None =
     return f"scored {n} headlines with {scorer.model_name}"
 
 
-def run_analyze(store: Store, config: Config, day: date) -> DayResult:
-    return analyze_day(store, config, day, universe_tickers(store, day))
+@dataclass
+class AnalyzeResult:
+    today: DayResult
+    backfilled: list[date]
 
 
-def run_export(store: Store, config: Config, day: date) -> list[Path]:
-    return export_day(store, config, day)
+def backfill_days(store: Store, day: date) -> list[date]:
+    """Trading days in the last ``BACKFILL_DAYS`` before ``day`` that have price
+    bars but no correlation row yet."""
+    out = []
+    for back in range(1, BACKFILL_DAYS + 1):
+        prev = day - timedelta(days=back)
+        iso = prev.isoformat()
+        if not is_trading_day(prev) or store.correlations_on(iso) or not store.prices_on(iso):
+            continue
+        out.append(prev)
+    return sorted(out)
+
+
+def run_analyze(store: Store, config: Config, day: date) -> AnalyzeResult:
+    backfilled = []
+    for prev in backfill_days(store, day):
+        members, _ = membership_for(store, config, prev)
+        analyze_day(store, config, prev, [m.ticker for m in members])
+        backfilled.append(prev)
+        log.info("analyze: backfilled %s", prev)
+    today = analyze_day(store, config, day, universe_tickers(store, day))
+    return AnalyzeResult(today, backfilled)
+
+
+def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -> list[Path]:
+    written = []
+    for d in [*also, day]:
+        written += export_day(store, config, d)
+    return written
 
 
 def _stage(name: str, fn: Callable[[], object], describe: Callable[[object], str]) -> StageResult:
@@ -148,6 +183,13 @@ def describe_day(result: DayResult) -> str:
     return "; ".join(parts)
 
 
+def describe_analyze(result: AnalyzeResult) -> str:
+    text = describe_day(result.today)
+    if result.backfilled:
+        text += "; backfilled " + ", ".join(d.isoformat() for d in result.backfilled)
+    return text
+
+
 def run_all(
     store: Store,
     config: Config,
@@ -158,13 +200,24 @@ def run_all(
     universe_source: UniverseSource | None = None,
 ) -> list[StageResult]:
     """Run every stage, continuing past failures. A non-trading day is not a failure."""
+    backfilled: list[date] = []
+
+    def analyze() -> AnalyzeResult:
+        result = run_analyze(store, config, day)
+        backfilled.extend(result.backfilled)
+        return result
+
     stages: Iterable[tuple[str, Callable[[], object], Callable[[object], str]]] = (
         ("universe", lambda: run_universe(store, config, day, universe_source), str),
         ("news", lambda: run_news(store, config, day, news_source), str),
         ("prices", lambda: run_prices(store, config, day, price_source), str),
         ("sentiment", lambda: run_sentiment(store, config, scorer), str),
-        ("analyze", lambda: run_analyze(store, config, day), describe_day),
-        ("export", lambda: run_export(store, config, day), lambda ps: f"{len(ps)} files"),
+        ("analyze", analyze, describe_analyze),
+        (
+            "export",
+            lambda: run_export(store, config, day, backfilled),
+            lambda ps: f"{len(ps)} files",
+        ),
     )
     return [_stage(name, fn, describe) for name, fn, describe in stages]
 

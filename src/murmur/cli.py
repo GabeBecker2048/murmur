@@ -114,7 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(pipeline.run_prices(store, config, day))
         elif args.command == "analyze":
             print(pipeline.run_sentiment(store, config))
-            print(pipeline.describe_day(pipeline.run_analyze(store, config, day)))
+            print(pipeline.describe_analyze(pipeline.run_analyze(store, config, day)))
         elif args.command == "export":
             for path in pipeline.run_export(store, config, day):
                 print(path)
