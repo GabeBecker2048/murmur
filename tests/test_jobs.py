@@ -184,14 +184,15 @@ def test_scheduler_tick_queues_the_daily_run_and_retries(provider, monkeypatch):
 
 def test_boot_marks_stale_jobs(provider):
     cfg = provider.get()
+    old = "2020-01-01T00:00:00Z"  # created and started before this process booted
     with Store(cfg.store_path) as s:
-        a = s.create_job("sleep", {}, "api", "t")
-        s.start_job(a, "t")
-        b = s.create_job("sleep", {"x": 1}, "api", "t")
+        a = s.create_job("sleep", {}, "api", old)
+        s.start_job(a, old)
+        b = s.create_job("sleep", {"x": 1}, "api", old)
     worker = jobs.Worker(provider, scheduler=False, tick_seconds=0.05)
     worker.start()
     try:
-        time.sleep(0.2)
+        worker.ready.wait(5)
         with Store(cfg.store_path) as s:
             assert s.job_status(a) == "interrupted" and s.job_status(b) == "cancelled"
     finally:
