@@ -97,6 +97,14 @@ def test_market_cap_universe_selection(store):
         (3, "BRK-B", 1067983),
     ]
     assert members[0].name == "Apple Inc." and members[0].market_cap == 5.0e12
+    assert members[0].exchange == "NMS" and members[2].exchange == "NYQ"
+    total = 5.0e12 + 3.5e12 + 1.2e12
+    assert [round(m.weight, 6) for m in members] == [
+        round(5.0e12 / total, 6),
+        round(3.5e12 / total, 6),
+        round(1.2e12 / total, 6),
+    ]
+    assert abs(sum(m.weight for m in members) - 1) < 1e-9
     # GOOG skipped as a duplicate CIK without a country lookup; SPCX not SEC-registered
     assert screener.country_calls == ["AAPL", "GOOGL", "TSM", "BRK-B"]
 
@@ -145,6 +153,36 @@ def test_membership_for_builds_once_per_month_and_records_days(store, tmp_path):
     # rebuild on demand
     membership_for(store, cfg, date(2026, 11, 6), Src(), rebuild=True)
     assert calls[-1] == "2026-11"
+
+
+def test_coverage_is_the_top_of_the_index(store, tmp_path):
+    user = tmp_path / "c.toml"
+    user.write_text('[index]\nsize = 3\n[universe]\nsource = "marketcap"\nsize = 2\n')
+    cfg = load_config(user, env={})
+
+    class Src:
+        name = "fake"
+
+        def build(self, month):
+            return [
+                UniverseMember("AAPL", "Apple", 3.0, 1, 1, weight=0.5),
+                UniverseMember("MSFT", "Microsoft", 2.0, 2, 2, weight=0.33),
+                UniverseMember("JPM", "JPM", 1.0, 3, 3, weight=0.17),
+            ]
+
+    members, _ = membership_for(store, cfg, date(2026, 11, 5), Src())
+    assert [m.ticker for m in members] == ["AAPL", "MSFT"]  # coverage
+    assert [m.ticker for m in store.universe_month("2026-11")] == ["AAPL", "MSFT", "JPM"]  # index
+    assert [m.ticker for m in store.universe_for("2026-11-05")] == ["AAPL", "MSFT"]
+
+
+def test_coverage_cannot_exceed_the_index(tmp_path):
+    from murmur.config import ConfigError
+
+    user = tmp_path / "c.toml"
+    user.write_text('[index]\nsize = 50\n[universe]\nsource = "marketcap"\nsize = 100\n')
+    with pytest.raises(ConfigError, match="cannot exceed"):
+        load_config(user, env={})
 
 
 def test_static_source_names():

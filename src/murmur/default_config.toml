@@ -31,14 +31,21 @@ device = "cpu"                  # "cpu", "cuda" or "auto" (cuda if available)
 # every request. Used once a month to fetch the public ticker/CIK list.
 contact = "gabebecker2048@gmail.com"
 
+[index]
+# The cap-weighted list of the `size` largest US-domiciled companies on
+# NYSE/Nasdaq (SEC ticker list + Yahoo screener), rebalanced on the first
+# trading day of each month and published as a dataset under `name`
+# ("m100" -> Murmur 100). weight = market cap / the month's total.
+name = "m100"
+size = 100
+
 [universe]
-# "marketcap": the `size` largest US-domiciled companies on NYSE/Nasdaq by
-# market cap (SEC ticker list + Yahoo screener), rebalanced on the first trading
-# day of each month. "static": the fixed list below. Membership is recorded in
-# the store per day either way, so analysis never reads this file directly.
+# "marketcap": the top `size` of the index get news and sentiment (coverage;
+# at most index.size). "static": the fixed list below. Membership is recorded
+# in the store per day either way, so analysis never reads this file directly.
 source = "marketcap"
 size = 100
-min_market_cap = 10_000_000_000  # screener floor; keep well below the 100th company's cap
+min_market_cap = 10_000_000_000  # screener floor; keep well below the last company's cap
 
 [schedule]
 time = "18:00"                  # local time in `timezone`, every day incl. weekends

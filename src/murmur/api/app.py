@@ -7,7 +7,9 @@ from __future__ import annotations
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,7 +43,38 @@ class _RingLog(logging.Handler):
 
 class PublishedFiles(StaticFiles):
     """The published tree. ``index.json`` must always be revalidated; day files are
-    rewritten by the second analysis pass, so they get a short max-age."""
+    rewritten by the second analysis pass, so they get a short max-age. Any
+    ``.parquet`` file is also served as CSV with ``?format=csv`` (converted on
+    request; CSV is never stored)."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        if path.endswith(".parquet") and query.get("format", [""])[0] == "csv":
+            return self._csv_response(path)
+        return await super().get_response(path, scope)
+
+    def _csv_response(self, path: str) -> Response:
+        full = Path(self.directory) / path
+        try:
+            full.resolve().relative_to(Path(self.directory).resolve())
+        except ValueError:
+            return Response("not found", status_code=404)
+        if not full.is_file():
+            return Response("not found", status_code=404)
+        import pyarrow.csv as pcsv
+        import pyarrow.parquet as pq
+
+        buf = BytesIO()
+        pcsv.write_csv(pq.read_table(full), buf)
+        filename = full.name[: -len(".parquet")] + ".csv"
+        return Response(
+            buf.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "public, max-age=300",
+            },
+        )
 
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
@@ -83,8 +116,8 @@ def create_app(
         version=__version__,
         description=(
             "News-sentiment vs stock-return pipeline. `/api/v1` answers queries and runs "
-            "jobs; `/data` serves the published Parquet tree. Mutating routes need "
-            "`Authorization: Bearer <MURMUR_API_TOKEN>`."
+            "jobs; `/data` serves the published datasets (Parquet, or CSV with "
+            "`?format=csv`). Mutating routes need `Authorization: Bearer <MURMUR_API_TOKEN>`."
         ),
         lifespan=lifespan,
     )
@@ -104,8 +137,11 @@ def create_app(
 
     from murmur.api.routes import (
         charts,
+        companies,
         correlations,
+        datasets,
         days,
+        index,
         jobs,
         leadlag,
         runs,
@@ -121,6 +157,9 @@ def create_app(
         runs,
         jobs,
         settings,
+        datasets,
+        index,
+        companies,
         universe,
         days,
         tickers,

@@ -175,8 +175,8 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
         assert {r["lag"] for r in nov4} == {0, 1}
         assert "intraday" not in {r["return_type"] for r in nov4 if r["lag"] == 0}
         assert {r["lag"] for r in store.correlations_on("2026-11-05")} == {-1, 0}
-        assert (cfg.published_dir / "2026/11/04/correlations.parquet").exists()
-        assert (cfg.published_dir / "2026/11/05/correlations.parquet").exists()
+        assert (cfg.published_dir / "correlations/2026/11/04/20261104.daily.parquet").exists()
+        assert (cfg.published_dir / "correlations/2026/11/05/20261105.daily.parquet").exists()
 
         # nothing left to backfill
         assert pipeline.backfill_days(store, nov5) == []
@@ -231,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.6.0" in capsys.readouterr().out
+    assert "murmur 0.7.0" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):
@@ -253,7 +253,7 @@ def test_previous_session_is_reanalysed_and_reexported(cfg):
         by_name = {r.name: r for r in results}
         assert "re-analysed 2026-11-04" in by_name["analyze"].summary
         assert {r["lag"] for r in store.correlations_on("2026-11-04")} == {0, 1}
-        assert (cfg.published_dir / "2026/11/04/correlations.parquet").exists()
+        assert (cfg.published_dir / "correlations/2026/11/04/20261104.daily.parquet").exists()
 
 
 def test_analyze_all(cfg, monkeypatch, capsys):

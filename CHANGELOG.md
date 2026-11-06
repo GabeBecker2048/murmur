@@ -4,6 +4,34 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.7.0] - Unreleased
+
+Datasets, control, the web UI. Three pull requests; released when the last
+one lands.
+
+### Added
+
+- The published tree is six datasets, dataset first, every file named after
+  its date and table: `companies`, `m100` (the Murmur 100 with `weight` and a
+  monthly `changes` table), `prices` (bar + returns), `news` (article x
+  ticker + scores), `sentiment`, `correlations` (+ charts). `index.json` is a
+  manifest with tables, columns, keys and a license per dataset (CC BY 4.0;
+  CC BY-NC-SA 4.0 where FinBERT scores are involved).
+- `?format=csv` on any Parquet URL under `/data` converts on request.
+- `[index] name, size`: the index is ranked and weighted at `index.size`;
+  `universe.size` is coverage and may be smaller. Schema v7 adds `weight` and
+  `exchange` to the monthly universe and computes weights for existing months.
+- `GET /api/v1/datasets[/{name}]`, `/api/v1/index/{name}[/months|/changes|
+  /history/{key}]`, `/api/v1/companies[/{key}]`. Every company row in the API
+  and the files carries `cik`.
+
+### Changed
+
+- `/api/v1/universe` and `/universe/months` remain as deprecated aliases of
+  `/api/v1/index/{name}`.
+- The published tree on an existing deployment is rebuilt once with
+  `export --all` (the old date-first files are removed by hand).
+
 ## [0.6.0] - 2026-11-06
 
 The API. One process for everything, and a control plane for the web UI.

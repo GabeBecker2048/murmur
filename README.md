@@ -167,14 +167,16 @@ GET  /api/v1/runs[/{id}]                 the daily run log
 GET  /api/v1/jobs[/{id}[/log?after=]]    the job queue; POST /api/v1/jobs {type, params, confirm}
 DELETE /api/v1/jobs/{id}                 cancel; POST /api/v1/scheduler/run-now
 GET  /api/v1/settings[/schema]           effective config with provenance; PUT /api/v1/settings
-GET  /api/v1/universe[/months]           the companies in force on a date or month
+GET  /api/v1/datasets[/{name}]           the published datasets and their files
+GET  /api/v1/index/m100[/months|/changes|/history/{key}]   the Murmur 100: constituents, weights
+GET  /api/v1/companies[/{key}]           every company ever ranked, by ticker or CIK
 GET  /api/v1/days[/{date}[/articles]]    per-day cross-section
 GET  /api/v1/tickers[/{t}[/series|/articles|/leadlag]]
 GET  /api/v1/correlations                the daily correlations as a series
 GET  /api/v1/leadlag[/history]           the rolling results and their history
 GET  /api/v1/sources[/{s}/series]        source coverage and comparison
 GET  /api/v1/charts/leadlag.png          the one chart the API draws
-GET  /data/index.json, /data/YYYY/MM/DD/<table>.parquet
+GET  /data/index.json, /data/<dataset>/YYYY/MM/DD/YYYYMMDD.<table>.parquet[?format=csv]
 GET  /docs                               OpenAPI UI
 ```
 
@@ -262,29 +264,52 @@ Tickers everywhere use the SEC and Yahoo form with a dash (`BRK-B`).
 
 ## Data
 
-`data/murmur.sqlite` is the source of truth. `murmur export` writes a trading
-day's files under `data/published/`, date first, one Parquet file per table;
-`murmur export --all` rebuilds the whole tree from the store.
+`data/murmur.sqlite` is the source of truth. `murmur export` writes the
+published datasets under `data/published/` (served at `/data/`);
+`murmur export --all` rebuilds the whole tree from the store. Six datasets,
+each its own directory, every file named after its date and table:
 
 ```
-index.json                              every file: table, date, path, format, rows
-2026/11/universe.parquet                the month's universe (rank, ticker, name, market cap, CIK)
-2026/11/05/articles.parquet             the trading day's articles, with window and reporting sources
-2026/11/05/prices.parquet               OHLCV bars
-2026/11/05/returns.parquet              overnight, intraday, daily per ticker
-2026/11/05/sentiment.parquet            per-headline scores with ticker and window
-2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns, per source
-2026/11/05/correlations.parquet         the day's correlations (window x return x lag x source)
-2026/11/05/rolling_correlations.parquet rolling 1/3/6/12-month results as of the day, pooled/per ticker, per source
-2026/11/05/sentiment.png, correlation.png, leadlag.png
-2026/10/prices.parquet ...              a finished month, compacted into one file per table
+index.json                                        the manifest: datasets, tables, columns, keys, licenses, files
+companies/2026/11/202611.companies.parquet        every company ever ranked: CIK, ticker, name, exchange, country
+m100/2026/11/202611.constituents.parquet          the Murmur 100: month, effective date, rank, CIK, ticker, cap, weight
+m100/2026/11/202611.changes.parquet               companies added and removed versus the previous month
+prices/2026/11/05/20261105.prices.parquet         OHLCV bar plus prev_close, overnight, intraday, daily
+news/2026/11/05/20261105.articles.parquet         one row per headline x company, sources, window, FinBERT scores
+sentiment/2026/11/05/20261105.sentiment.parquet   per company x window x source: headline count, mean score
+correlations/2026/11/05/20261105.daily.parquet    the day's correlations (window x return x lag x source)
+correlations/2026/11/05/20261105.rolling.parquet  1/3/6/12-month results as of the day, pooled and per company
+correlations/2026/11/05/20261105.leadlag.png      + sentiment.png, correlation.png
+prices/2026/10/202610.prices.parquet              a finished month, compacted into one file per table
 ```
 
-Once a month is over its daily files are folded into one file per table in
-the month directory (a later backfill is merged in on the next export); the
-charts stay in the day directories. A file with no rows is never written, and
-articles with no publication time are stored but not exported or analysed.
-`pandas.read_parquet` or DuckDB read the tree directly.
+Daily files are `{dataset}/{YYYY}/{MM}/{DD}/{YYYYMMDD}.{table}.parquet`;
+monthly files and compacted months are
+`{dataset}/{YYYY}/{MM}/{YYYYMM}.{table}.parquet`. Once a month is over its
+day files are folded into the month file (deduplicated by the table's key) and
+removed, so a glob never double counts; the charts stay in their day
+directory. A table with no rows is never written. Every row that names a
+company carries both `cik` and `ticker`. Any Parquet URL answers as CSV with
+`?format=csv`; nothing is stored twice.
+
+```python
+import pandas as pd
+m100 = pd.read_parquet("http://192.168.1.10:8100/data/m100/2026/11/202611.constituents.parquet")
+news = pd.read_parquet("data/published/news/2026/11/")   # a whole month from the tree
+```
+
+**The Murmur 100.** The universe is published as a cap-weighted index: the
+`index.size` largest US-domiciled companies on NYSE/Nasdaq, rebalanced on the
+first trading day of each month, each with `weight = market_cap / total`.
+Coverage (`universe.size`, who gets news and sentiment) is the top of the
+index and may be smaller than it; a Murmur 250 is `[index] name = "m250"`,
+`size = 250` in the config.
+
+**Licenses.** Stated per dataset in `index.json`: CC BY 4.0 for `companies`,
+`m100`, `prices` and `correlations`; `news` and `sentiment` carry FinBERT's
+CC BY-NC-SA 4.0 until a permissively licensed model replaces it. Whether
+`prices` is served publicly depends on the price source's terms (see
+`ROADMAP.md`, Licensing).
 
 ## Release and deploy
 

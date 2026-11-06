@@ -45,6 +45,9 @@ class UniverseMember:
     market_cap: float | None = None
     rank: int | None = None
     cik: int | None = None
+    weight: float | None = None
+    """Share of the month's total market cap, so the list doubles as a cap-weighted index."""
+    exchange: str | None = None
 
 
 @dataclass(frozen=True)

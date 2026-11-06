@@ -7,7 +7,8 @@ from murmur.clock import parse_date
 from murmur.store import Store
 from murmur.universe import applicable_month
 
-router = APIRouter(tags=["universe"])
+router = APIRouter(tags=["universe"], deprecated=True)
+"""0.6.0 names, kept as aliases of ``/index/{name}``; new clients use that."""
 
 
 @router.get("/universe/months")

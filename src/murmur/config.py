@@ -39,6 +39,7 @@ LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", *SECRET_KEYS)
 
 # Tables that a higher layer replaces wholesale instead of merging key by key.
 REPLACE_TABLES = {("universe", "static")}
+INDEX_NAME_PATTERN = r"^[a-z][a-z0-9]{1,15}$"
 
 
 class ConfigError(ValueError):
@@ -78,8 +79,21 @@ class SecConfig:
 class UniverseConfig:
     source: str
     size: int
+    """Coverage: how many of the ranked companies get news and sentiment."""
     min_market_cap: float
     static: dict[str, str]
+
+
+@dataclass(frozen=True)
+class IndexConfig:
+    name: str
+    """Dataset and endpoint name of the cap-weighted list (``m100``)."""
+    size: int
+    """How many companies are ranked and weighted; coverage is at most this."""
+
+    @property
+    def title(self) -> str:
+        return f"Murmur {self.size}"
 
 
 @dataclass(frozen=True)
@@ -113,6 +127,7 @@ class Config:
     sentiment: SentimentConfig
     sec: SecConfig
     universe: UniverseConfig
+    index: IndexConfig
     schedule: ScheduleConfig
     api: ApiConfig
     source_path: Path | None
@@ -266,6 +281,18 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
             raise ConfigError("schedule.retries must be >= 0 and retry_delay_minutes >= 1")
         if int(universe.get("size", 100)) < 1 or int(raw["sentiment"]["batch_size"]) < 1:
             raise ConfigError("universe.size and sentiment.batch_size must be >= 1")
+        index = raw.get("index", {})
+        index_name = str(index.get("name", "m100"))
+        if not re.fullmatch(INDEX_NAME_PATTERN, index_name):
+            raise ConfigError(f"index.name must match {INDEX_NAME_PATTERN}, not {index_name!r}")
+        index_size = int(index.get("size", universe.get("size", 100)))
+        if index_size < 1:
+            raise ConfigError("index.size must be >= 1")
+        if universe["source"] == "marketcap" and int(universe.get("size", 100)) > index_size:
+            raise ConfigError(
+                f"universe.size ({universe.get('size', 100)}) cannot exceed index.size "
+                f"({index_size}): coverage is a subset of the index"
+            )
         return Config(
             data_dir=Path(raw["data_dir"]),
             timezone=str(raw["timezone"]),
@@ -287,6 +314,7 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 min_market_cap=float(universe.get("min_market_cap", 10_000_000_000)),
                 static=static,
             ),
+            index=IndexConfig(name=index_name, size=index_size),
             schedule=ScheduleConfig(
                 time=schedule_time,
                 retries=int(raw["schedule"]["retries"]),
@@ -369,7 +397,19 @@ SETTINGS_SCHEMA: list[dict] = [
         "path": "universe.size",
         "type": "integer",
         "min": 1,
-        "help": "Companies in the market-cap universe.",
+        "help": "Coverage: how many ranked companies get news and sentiment (at most index.size).",
+    },
+    {
+        "path": "index.name",
+        "type": "string",
+        "pattern": INDEX_NAME_PATTERN,
+        "help": "Dataset and endpoint name of the cap-weighted index (m100 -> Murmur 100).",
+    },
+    {
+        "path": "index.size",
+        "type": "integer",
+        "min": 1,
+        "help": "Companies ranked and weighted each month; coverage is at most this.",
     },
     {
         "path": "universe.min_market_cap",

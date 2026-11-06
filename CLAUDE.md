@@ -73,7 +73,8 @@ are gitignored.
   `--config` > `MURMUR_CONFIG` > `./murmur.toml` > defaults. Every table merges key by key
   except `[universe.static]`, which a user file replaces wholesale. Sections: `news`,
   `sentiment` (model, batch_size, device), `sec` (contact email, required by the SEC),
-  `universe` (source marketcap|static, size, min_market_cap), `schedule`.
+  `universe` (source marketcap|static, size = coverage, min_market_cap), `index` (name,
+  size; coverage <= index size), `schedule`.
 - `store.py` SQLite. `MIGRATIONS` is keyed by `PRAGMA user_version`; add a new entry for a
   schema change, never edit a shipped one. All writes are upserts. `upsert_article` merges
   by URL or by `title_norm` within `DEDUP_WINDOW_DAYS`, keeps the earliest `published_at`,
@@ -100,9 +101,13 @@ are gitignored.
   `pipeline.default_news_sources(config, names)` builds the configured list.
 - `universe.py` `MarketCapUniverse.build(month)`: screener candidates in cap order, keep
   those on NYSE/Nasdaq with an SEC CIK, one per CIK, country == "United States" (cached in
-  `companies` for a year), top `size`. `applicable_month(day)` is this month from its first
-  trading day, else the previous month. `membership_for` builds the month if the store has
-  no row for it and records the day's membership. `StaticUniverse` for tests/offline.
+  `companies` for a year), top `index.size`, each with `weight` (cap / total) and
+  `exchange`. This is the index (`universe_months`, published as `m100`); the coverage
+  (`universe.size`, at most `index.size`) is its top slice and is what `membership_for`
+  records per day in `universe_membership` and what analysis reads. `applicable_month(day)`
+  is this month from its first trading day, else the previous month. `StaticUniverse` for
+  tests/offline (covered in full). Months built before 0.7.0 have `exchange = NULL` until
+  `universe --rebuild`; the v7 migration computes their weights.
 - `scheduler.py` `Scheduler` with injectable clock/sleep for tests: fires at
   `schedule.time`, retries, catches up a missed day on start, heartbeat file, SIGTERM stop.
   `serve()` is `murmur schedule`. `pipeline.run_day` wraps `run_all` in a `runs` row.
@@ -123,13 +128,20 @@ are gitignored.
 - `pipeline.run_analyze` order: backfill missing days → today → a second pass over the
   previous session and the backfilled days (they gain lag +1 now) → rolling as of today.
   Everything analysed is exported. `analyze_all` is `murmur analyze --all`.
-- `export.py` Parquet only (pandas + pyarrow). Date-first layout: `YYYY/MM/DD/<table>.parquet`
-  for every table in `DAY_TABLES` plus the PNGs (sentiment, correlation, leadlag),
-  `YYYY/MM/universe.parquet` per month.
-  `compact_finished_months` folds every month before the current one into
-  `YYYY/MM/<table>.parquet` (dedup by `KEYS`), leaving only charts in the day dirs. A table
-  with no rows is not written (stale file removed). `index.json` entries
-  `{table, date, path, format, rows}`. `export_day(..., today=)` is injectable for tests.
+- `export.py` Parquet only (pandas + pyarrow), organised as datasets. `datasets(config)` is
+  the registry: `Dataset(name, cadence daily|monthly, tables, license)` with
+  `Table(name, columns, key, query)`; the index dataset is named after `config.index.name`.
+  Layout `{dataset}/YYYY/MM/DD/YYYYMMDD.{table}.parquet` (daily) and
+  `{dataset}/YYYY/MM/YYYYMM.{table}.parquet` (monthly tables and compacted months); charts
+  live under `correlations/`. `day_path`/`month_path` are the only places file names are
+  built. `export_day` writes the daily datasets for the day plus the monthly ones for its
+  month, compacts finished months (`compact_finished_months`, dedup by `Table.key`, day
+  files removed, empty dirs pruned) and rewrites `index.json` (`manifest()`: per dataset
+  title, cadence, tables with columns and keys, license, files `{table, date, path,
+  format, rows, bytes, modified}`). `rebuild_month` regenerates from the store. A table
+  with no rows is not written. CSV is never stored: `api.app.PublishedFiles` converts a
+  `.parquet` URL with `?format=csv` on request. Every company row carries `cik` + `ticker`
+  (`store.ticker_ciks()`).
 
 ## Rules that tests enforce
 

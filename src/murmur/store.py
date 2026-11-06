@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -268,6 +268,15 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX idx_jobs_status ON jobs (status, not_before, priority, id);
     CREATE INDEX idx_jobs_day ON jobs (type, day);
     """,
+    7: """
+    -- 0.7.0: the universe doubles as a cap-weighted index (weight = cap / month total).
+    ALTER TABLE universe_months ADD COLUMN weight REAL;
+    ALTER TABLE universe_months ADD COLUMN exchange TEXT;
+    ALTER TABLE companies ADD COLUMN exchange TEXT;
+    UPDATE universe_months SET weight = market_cap / (
+        SELECT sum(market_cap) FROM universe_months t WHERE t.month = universe_months.month
+    ) WHERE market_cap IS NOT NULL;
+    """,
 }
 
 JOB_ACTIVE = ("queued", "running", "cancelling")
@@ -279,7 +288,16 @@ of each other are the same article (seen through different sources)."""
 
 
 def _member(r: sqlite3.Row) -> UniverseMember:
-    return UniverseMember(r["ticker"], r["name"], r["market_cap"], r["rank"], r["cik"])
+    keys = r.keys()
+    return UniverseMember(
+        r["ticker"],
+        r["name"],
+        r["market_cap"],
+        r["rank"],
+        r["cik"],
+        weight=r["weight"] if "weight" in keys else None,
+        exchange=r["exchange"] if "exchange" in keys else None,
+    )
 
 
 class Store:
@@ -369,7 +387,7 @@ class Store:
 
     def universe_month(self, month: str) -> list[UniverseMember]:
         rows = self.conn.execute(
-            """SELECT ticker, name, market_cap, rank, cik FROM universe_months
+            """SELECT ticker, name, market_cap, rank, cik, weight, exchange FROM universe_months
                WHERE month = ? ORDER BY rank, ticker""",
             (month,),
         )
@@ -383,10 +401,20 @@ class Store:
             self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,))
             self.conn.executemany(
                 """INSERT INTO universe_months (month, rank, ticker, cik, name, market_cap,
-                                                computed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                                computed_at, weight, exchange)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
-                    (month, m.rank, m.ticker, m.cik, m.name, m.market_cap, computed_at)
+                    (
+                        month,
+                        m.rank,
+                        m.ticker,
+                        m.cik,
+                        m.name,
+                        m.market_cap,
+                        computed_at,
+                        m.weight,
+                        m.exchange,
+                    )
                     for m in members
                 ],
             )
@@ -395,6 +423,78 @@ class Store:
         rows = self.conn.execute("SELECT DISTINCT month FROM universe_months ORDER BY month")
         return [r["month"] for r in rows]
 
+    def universe_changes(self, month: str) -> list[sqlite3.Row]:
+        """Constituents added to and removed from ``month`` relative to the previous
+        month on record (``month, cik, ticker, name, action, rank``). The first month
+        has no changes. Companies are matched by CIK, falling back to ticker."""
+        prev = self.conn.execute(
+            "SELECT max(month) FROM universe_months WHERE month < ?", (month,)
+        ).fetchone()[0]
+        if prev is None:
+            return []
+        return self.conn.execute(
+            """SELECT ? AS month, cik, ticker, name, 'added' AS action, rank
+               FROM universe_months a WHERE a.month = ? AND NOT EXISTS (
+                 SELECT 1 FROM universe_months b WHERE b.month = ?
+                   AND coalesce(b.cik, b.ticker) = coalesce(a.cik, a.ticker))
+               UNION ALL
+               SELECT ? AS month, cik, ticker, name, 'removed' AS action, rank
+               FROM universe_months a WHERE a.month = ? AND NOT EXISTS (
+                 SELECT 1 FROM universe_months b WHERE b.month = ?
+                   AND coalesce(b.cik, b.ticker) = coalesce(a.cik, a.ticker))
+               ORDER BY action, rank""",
+            (month, month, prev, month, prev, month),
+        ).fetchall()
+
+    def ticker_history(self, key: str) -> list[sqlite3.Row]:
+        """Rank and weight per month for a ticker or a CIK (digits)."""
+        where = "cik = ?" if key.isdigit() else "ticker = ?"
+        return self.conn.execute(
+            f"""SELECT month, rank, ticker, cik, name, market_cap, weight
+                FROM universe_months WHERE {where} ORDER BY month""",
+            (int(key) if key.isdigit() else key,),
+        ).fetchall()
+
+    def companies_snapshot(self, upto: str | None = None) -> list[sqlite3.Row]:
+        """One row per company ranked in any month up to ``upto`` (default: all):
+        identity, the latest ticker and name, exchange and country where known, and
+        the first and last month ranked."""
+        upto = upto or "9999-99"
+        return self.conn.execute(
+            """SELECT g.cik, l.ticker, l.name, c.exchange, c.country,
+                      g.first_month, g.last_month, g.months
+               FROM (SELECT coalesce(cik, ticker) AS k, cik, min(month) AS first_month,
+                            max(month) AS last_month, count(*) AS months
+                     FROM universe_months WHERE month <= ?
+                     GROUP BY coalesce(cik, ticker)) g
+               JOIN universe_months l
+                 ON coalesce(l.cik, l.ticker) = g.k AND l.month = g.last_month
+               LEFT JOIN companies c ON c.cik = g.cik
+               ORDER BY l.ticker""",
+            (upto,),
+        ).fetchall()
+
+    def companies_query(self, q: str | None, limit: int, offset: int) -> tuple[list, int]:
+        rows = self.companies_snapshot()
+        if q:
+            needle = q.lower()
+            rows = [
+                r
+                for r in rows
+                if needle in r["ticker"].lower()
+                or needle in r["name"].lower()
+                or (r["cik"] is not None and needle == str(r["cik"]))
+            ]
+        return rows[offset : offset + limit], len(rows)
+
+    def ticker_ciks(self) -> dict[str, int]:
+        """ticker -> CIK from the latest month each ticker was ranked."""
+        rows = self.conn.execute(
+            """SELECT ticker, cik FROM universe_months WHERE cik IS NOT NULL
+               ORDER BY month"""  # later months overwrite earlier ones
+        )
+        return {r["ticker"]: r["cik"] for r in rows}
+
     # -- companies (CIK -> country cache) -------------------------------------
 
     def company_countries(self) -> dict[int, tuple[str | None, str | None]]:
@@ -402,19 +502,32 @@ class Store:
         return {r["cik"]: (r["country"], r["country_checked_at"]) for r in rows}
 
     def upsert_company(
-        self, cik: int, ticker: str, name: str, country: str | None, checked_at: str
+        self,
+        cik: int,
+        ticker: str,
+        name: str,
+        country: str | None,
+        checked_at: str,
+        exchange: str | None = None,
     ) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.execute(
-                """INSERT INTO companies (cik, ticker, name, country, country_checked_at)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO companies (cik, ticker, name, country, country_checked_at,
+                                          exchange)
+                   VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT (cik) DO UPDATE SET
                      ticker = excluded.ticker, name = excluded.name,
                      country = excluded.country,
-                     country_checked_at = excluded.country_checked_at""",
-                (cik, ticker, name, country, checked_at),
+                     country_checked_at = excluded.country_checked_at,
+                     exchange = coalesce(excluded.exchange, companies.exchange)""",
+                (cik, ticker, name, country, checked_at, exchange),
             )
+
+    def set_company_exchange(self, cik: int, exchange: str) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute("UPDATE companies SET exchange = ? WHERE cik = ?", (exchange, cik))
 
     # -- runs -----------------------------------------------------------------
 
@@ -810,6 +923,36 @@ class Store:
             """SELECT ticker, date, prev_date, prev_close, open, close, overnight, intraday,
                       daily FROM returns WHERE date = ? ORDER BY ticker""",
             (date,),
+        ).fetchall()
+
+    def prices_with_returns_on(self, date: str) -> list[sqlite3.Row]:
+        """The day's bars with the three returns alongside (the ``prices`` dataset)."""
+        return self.conn.execute(
+            """SELECT p.ticker, p.date, p.open, p.high, p.low, p.close, p.adj_close, p.volume,
+                      p.source, r.prev_date, r.prev_close, r.overnight, r.intraday, r.daily
+               FROM prices p LEFT JOIN returns r ON r.ticker = p.ticker AND r.date = p.date
+               WHERE p.date = ? ORDER BY p.ticker""",
+            (date,),
+        ).fetchall()
+
+    def articles_with_scores_on(self, trading_day: str, model: str) -> list[sqlite3.Row]:
+        """One row per article x ticker for a trading day, with the model's scores
+        where they exist (the ``news`` dataset)."""
+        return self.conn.execute(
+            """SELECT a.id AS article_id, t.ticker, a.title, a.url, a.provider AS publisher,
+                      a.content_type, a.source, a.published_at, a.first_seen_at, a.trading_day,
+                      a.window,
+                      (SELECT group_concat(source, ',') FROM (
+                         SELECT source FROM article_sources
+                         WHERE article_id = a.id ORDER BY seen_at, rowid)) AS sources,
+                      s.positive, s.negative, s.neutral, s.label, s.score,
+                      CASE WHEN s.article_id IS NULL THEN NULL ELSE ? END AS model
+               FROM articles a
+               JOIN article_tickers t ON t.article_id = a.id
+               LEFT JOIN sentiment s ON s.article_id = a.id AND s.model = ?
+               WHERE a.trading_day = ?
+               ORDER BY t.ticker, a.published_at, a.id""",
+            (model, model, trading_day),
         ).fetchall()
 
     def upsert_correlation(self, row: dict) -> None:

@@ -1,6 +1,6 @@
 [project]
 name = "murmur"
-version = "0.6.0"
+version = "0.7.0"
 description = "Daily news-sentiment vs stock-return pipeline for the largest US companies."
 readme = "README.md"
 requires-python = ">=3.11"

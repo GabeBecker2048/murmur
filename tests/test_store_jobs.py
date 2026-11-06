@@ -69,10 +69,18 @@ def test_migrates_a_version_5_store(tmp_path):
     path = tmp_path / "v5.sqlite"
     conn = sqlite3.connect(path)
     conn.executescript("".join(MIGRATIONS[v] for v in range(1, 6)) + "PRAGMA user_version = 5;")
+    conn.execute(
+        """INSERT INTO universe_months (month, rank, ticker, cik, name, market_cap, computed_at)
+           VALUES ('2026-11', 1, 'AAPL', 1, 'Apple', 3.0, 't'),
+                  ('2026-11', 2, 'MSFT', 2, 'Microsoft', 1.0, 't')"""
+    )
+    conn.commit()
     conn.close()
     with Store(path) as s:
         assert s.schema_version == SCHEMA_VERSION
         assert s.count("jobs") == 0
+        # 0.7.0 computes the index weights for months that already exist
+        assert [m.weight for m in s.universe_month("2026-11")] == [0.75, 0.25]
     # the migrated file is refused by an older schema constant (the rollback story)
     import murmur.store as store_mod
 
