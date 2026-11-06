@@ -2,6 +2,7 @@
 jobs, settings, charts and /data."""
 
 import time
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,6 +77,14 @@ def test_openapi_lists_the_surface(client):
         "/api/v1/settings/schema",
         "/api/v1/universe",
         "/api/v1/universe/months",
+        "/api/v1/datasets",
+        "/api/v1/datasets/{name}",
+        "/api/v1/index/{name}",
+        "/api/v1/index/{name}/months",
+        "/api/v1/index/{name}/changes",
+        "/api/v1/index/{name}/history/{key}",
+        "/api/v1/companies",
+        "/api/v1/companies/{key}",
         "/api/v1/days",
         "/api/v1/days/{date}",
         "/api/v1/days/{date}/articles",
@@ -315,3 +324,57 @@ def test_run_now_enqueues_todays_run(client):
     r = client.post("/api/v1/scheduler/run-now", headers=AUTH)
     assert r.status_code == 202 and r.json()["date"]
     assert client.post("/api/v1/scheduler/run-now", headers=AUTH).status_code == 409
+
+
+def test_index_and_companies(client):
+    idx = client.get("/api/v1/index/m100").json()
+    assert idx["title"] == "Murmur 100" and idx["month"] == "2026-11"
+    assert idx["effective_date"] == "2026-11-02" and idx["size"] == 2
+    assert [(m["rank"], m["ticker"]) for m in idx["items"]] == [(1, "AAPL"), (2, "MSFT")]
+    assert client.get("/api/v1/index/m100?date=2026-11-05").json()["month"] == "2026-11"
+    assert client.get("/api/v1/index/m100/months").json()["months"] == ["2026-11"]
+    changes = client.get("/api/v1/index/m100/changes").json()
+    assert changes["added"] == [] and changes["removed"] == []
+    hist = client.get("/api/v1/index/m100/history/aapl").json()
+    assert [h["month"] for h in hist["items"]] == ["2026-11"]
+    assert client.get("/api/v1/index/m100/history/320193").json()["items"][0]["ticker"] == "AAPL"
+    assert client.get("/api/v1/index/m500").status_code == 404
+    # the 0.6.0 names still answer
+    assert client.get("/api/v1/universe").json()["month"] == "2026-11"
+
+    companies = client.get("/api/v1/companies").json()
+    assert companies["total"] == 2 and companies["items"][0]["cik"] == 320193
+    assert client.get("/api/v1/companies?q=micro").json()["total"] == 1
+    one = client.get("/api/v1/companies/789019").json()
+    assert one["ticker"] == "MSFT" and one["history"][0]["rank"] == 2
+    assert client.get("/api/v1/companies/NOPE").status_code == 404
+
+
+def test_datasets_and_csv(client, provider):
+    from murmur.export import export_day
+
+    with Store(provider.get().store_path) as s:
+        export_day(s, provider.get(), date(2026, 11, 5), today=date(2026, 11, 5))
+    listing = client.get("/api/v1/datasets").json()
+    names = [d["name"] for d in listing["items"]]
+    assert names == ["companies", "m100", "prices", "news", "sentiment", "correlations"]
+    prices = next(d for d in listing["items"] if d["name"] == "prices")
+    assert prices["file_count"] == 1 and prices["last_date"] == "2026-11-05"
+    assert "files" not in prices and prices["license"]["name"] == "CC BY 4.0"
+    ds = client.get("/api/v1/datasets/prices").json()
+    assert (
+        ds["total"] == 1 and ds["files"][0]["path"] == "prices/2026/11/05/20261105.prices.parquet"
+    )
+    assert client.get("/api/v1/datasets/prices?table=nope").json()["total"] == 0
+    assert client.get("/api/v1/datasets/nope").status_code == 404
+
+    url = "/data/prices/2026/11/05/20261105.prices.parquet"
+    parquet = client.get(url)
+    assert parquet.status_code == 200 and parquet.headers["cache-control"] == "public, max-age=300"
+    csv = client.get(url + "?format=csv")
+    assert csv.status_code == 200 and csv.headers["content-type"].startswith("text/csv")
+    assert csv.headers["content-disposition"] == 'attachment; filename="20261105.prices.csv"'
+    lines = csv.text.strip().splitlines()
+    assert lines[0].startswith('"cik","ticker","date"') and len(lines) == 3
+    assert client.get("/data/prices/2026/11/05/missing.parquet?format=csv").status_code == 404
+    assert client.get("/data/index.json").json()["datasets"]["m100"]["cadence"] == "monthly"

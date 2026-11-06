@@ -58,6 +58,8 @@ def status(
             "ops_file": str(config.source_path) if config.source_path else None,
             "settings_file": str(config.settings_path),
             "data_dir": str(config.data_dir),
+            "index": {"name": config.index.name, "size": config.index.size},
+            "coverage": config.universe.size,
             "news_sources": list(config.news.sources),
             "price_source": config.prices.source,
             "schedule": {"time": config.schedule.time, "timezone": config.timezone},

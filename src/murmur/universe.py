@@ -1,16 +1,19 @@
 """Which companies are in the index on a given day.
 
-The universe is rebuilt once a month: the ``size`` largest US-domiciled
-companies listed on NYSE/Nasdaq by market cap, one ticker per company. It
-takes effect on the first trading day of the month, so days before that use
-the previous month's list. Membership is recorded per day in the store, and
-analysis only ever reads that record.
+The index is rebuilt once a month: the ``index.size`` largest US-domiciled
+companies listed on NYSE/Nasdaq by market cap, one ticker per company, each
+with its share of the month's total cap (``weight``). It takes effect on the
+first trading day of the month, so days before that use the previous month's
+list. The top ``universe.size`` of it is the coverage: the companies whose news
+is fetched and scored. Coverage membership is recorded per day in the store,
+and analysis only ever reads that record.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Protocol
 
@@ -90,7 +93,7 @@ class MarketCapUniverse:
             if company.cik in seen:
                 continue  # second share class of a company already placed
             seen.add(company.cik)
-            country = self._country(company, c.symbol, cache, now)
+            country = self._country(company, c, cache, now)
             if country != US:
                 skipped_foreign += 1
                 log.debug("universe: %s is %s", c.symbol, country)
@@ -102,10 +105,12 @@ class MarketCapUniverse:
                     market_cap=c.market_cap,
                     rank=len(members) + 1,
                     cik=company.cik,
+                    exchange=c.exchange,
                 )
             )
             if len(members) == self.size:
                 break
+        members = with_weights(members)
         log.info(
             "universe %s: %d members (%d not SEC-registered, %d non-US skipped)",
             month,
@@ -119,15 +124,23 @@ class MarketCapUniverse:
             log.warning("universe: only %d of %d members found", len(members), self.size)
         return members
 
-    def _country(self, company: SecCompany, symbol: str, cache: dict, now: str) -> str | None:
+    def _country(self, company: SecCompany, c: Candidate, cache: dict, now: str) -> str | None:
         cached = cache.get(company.cik)
         if cached and cached[1]:
             age = parse_utc(now) - parse_utc(cached[1])
             if age < timedelta(days=COUNTRY_TTL_DAYS):
                 return cached[0]
-        country = self.screener.country(symbol)
-        self.store.upsert_company(company.cik, symbol, company.name, country, now)
+        country = self.screener.country(c.symbol)
+        self.store.upsert_company(company.cik, c.symbol, company.name, country, now, c.exchange)
         return country
+
+
+def with_weights(members: list[UniverseMember]) -> list[UniverseMember]:
+    """Each member's share of the total market cap; None when caps are unknown."""
+    total = sum(m.market_cap for m in members if m.market_cap)
+    if not total:
+        return members
+    return [replace(m, weight=(m.market_cap / total) if m.market_cap else None) for m in members]
 
 
 def default_source(config: Config, store: Store) -> UniverseSource:
@@ -135,7 +148,7 @@ def default_source(config: Config, store: Store) -> UniverseSource:
         return StaticUniverse(config.universe.static)
     return MarketCapUniverse(
         store,
-        size=config.universe.size,
+        size=config.index.size,
         sec_contact=config.sec.contact,
         min_market_cap=config.universe.min_market_cap,
     )
@@ -152,20 +165,30 @@ def applicable_month(day: date) -> str:
 def membership_for(
     store: Store, config: Config, day: date, source: UniverseSource | None = None, rebuild=False
 ) -> tuple[list[UniverseMember], bool]:
-    """Record and return the universe for ``day``; builds the month if needed.
+    """Record and return the coverage for ``day``; builds the month's index if needed.
 
-    Returns ``(members, rebuilt)``.
+    Returns ``(members, rebuilt)``. ``members`` is the covered subset (the top
+    ``universe.size`` of the index); the full ranked index is ``store.universe_month``.
     """
     month = applicable_month(day)
-    members = [] if rebuild else store.universe_month(month)
+    index = [] if rebuild else store.universe_month(month)
     rebuilt = False
-    if not members:
+    if not index:
         source = source or default_source(config, store)
-        members = source.build(month)
-        store.save_universe_month(month, members, utc_now_iso())
+        index = source.build(month)
+        store.save_universe_month(month, index, utc_now_iso())
         rebuilt = True
+    members = coverage(index, config)
     store.record_universe(day.isoformat(), members, config.universe.source)
     return members, rebuilt
+
+
+def coverage(index: list[UniverseMember], config: Config) -> list[UniverseMember]:
+    """The companies that get news and sentiment: the index's top ``universe.size``
+    (a static universe is covered in full)."""
+    if config.universe.source == "static":
+        return index
+    return index[: config.universe.size]
 
 
 def record_universe(store: Store, config: Config, day: date) -> list[UniverseMember]:

@@ -45,21 +45,36 @@ idempotent (an article seen twice is stored once). Parquet files are
 *exported* from it for publishing; they are never the source of truth. The
 server's disk is the source of truth; offsite storage is a backup.
 
-**Published files.** One Parquet file per day per table, compacted monthly
-into one file per month. A `index.json` lists what exists. CSV alongside
-Parquet for the small tables (universe, daily correlations). Layout, served
-by the API and later mirrored unchanged to Hugging Face:
+**Published files.** Six datasets, each its own directory, exported from the
+store as Parquet and served by the API (CSV is converted on request with
+`?format=csv`, never stored). Every file is named after its date and table so
+it keeps its meaning when moved. Daily tables are one file per trading day,
+compacted into one file per month once the month is over; monthly tables are
+one file per month. `index.json` is the manifest: datasets, tables, columns,
+keys, licenses and every file. The layout is mirrored unchanged to Hugging
+Face later:
 
 ```
 data/
   index.json
-  universe/2026-11.csv
-  articles/2026/11/05.parquet      articles/2026/11.parquet (after compaction)
-  prices/2026/11/05.parquet
-  sentiment/2026/11/05.parquet
-  analysis/daily/2026/11/05.csv
-  analysis/rolling/latest.csv
+  companies/2026/11/202611.companies.parquet       every company ever ranked (CIK, ticker, name, exchange)
+  m100/2026/11/202611.constituents.parquet         the Murmur 100: rank, weight, market cap
+  m100/2026/11/202611.changes.parquet              added and removed versus the previous month
+  prices/2026/11/05/20261105.prices.parquet        the bar and the three returns
+  prices/2026/10/202610.prices.parquet             a finished month, compacted
+  news/2026/11/05/20261105.articles.parquet        article x ticker, with the sentiment columns
+  sentiment/2026/11/05/20261105.sentiment.parquet  ticker x window x source daily aggregates
+  correlations/2026/11/05/20261105.daily.parquet   + rolling.parquet and the PNG charts
 ```
+
+Every row that names a company carries both `cik` (the durable identity) and
+`ticker` (the daily join key).
+
+**The index.** The universe doubles as a cap-weighted index, the Murmur 100
+(`m100`): the `index.size` largest US-domiciled companies, each with its share
+of the month's total cap. Coverage (`universe.size`, the companies whose news
+is fetched and scored) is the top of the index and may be smaller than it, so
+a Murmur 250 or 500 is a config change, not new code.
 
 Store URLs and headlines, not article bodies. Expected growth: about 1 GB a
 year at 100 tickers.
@@ -95,9 +110,13 @@ with a compose file, one volume for the store and published files, and a
 nightly rsync of that volume to offsite storage.
 
 **Licensing.** Code is MIT. The repository stays private until the original
-contributors agree to publishing. Data, when published, gets its own license
-(CC BY-NC 4.0 is the current intent). Sources used under personal-use terms
-are replaced before any public release.
+contributors agree to publishing. Data is published under **CC BY 4.0** per
+dataset, stated in the manifest, with two exceptions: `news` and `sentiment`
+carry FinBERT's CC BY-NC-SA 4.0 until a permissively licensed model replaces
+it, and `prices` is published only if the price source's terms allow
+redistribution (Databento's end-of-day summary is the candidate, with its
+attribution). Sources used under personal-use terms are replaced before any
+public release.
 
 ## 0.1.0 - the package
 
@@ -150,12 +169,21 @@ are replaced before any public release.
   for a date, run status). OpenAPI docs served by the app.
 - The scheduler moves into the same process.
 
-## 0.7.0 - the web UI
+## 0.7.0 - datasets, control, the web UI
 
-- Static HTML/JS with Plotly.js, served by the API. Pages: overview (the
-  lead/lag chart and today's numbers), lead/lag explorer, ticker detail,
-  sources comparison, universe, downloads.
-- Light and dark themes, usable on a phone.
+Three pull requests, one release.
+
+- Datasets: the six-dataset layout above, the Murmur 100 with weights and
+  monthly changes, `companies`, prices with returns folded in, CSV on request,
+  `/api/v1/datasets`, `/api/v1/index/{name}`, `/api/v1/companies`.
+- Control: a `backfill` job (date range, chosen stages, optional regenerate),
+  a `[ui]` settings section, scheduler pause and resume, a licensed price
+  source (Databento end-of-day) with a morning analysis slot.
+- Static HTML/JS with Plotly.js, served by the API. Public dashboard: overview
+  (the lead/lag chart and today's numbers), lead/lag explorer, ticker detail,
+  sources comparison, index, downloads. Admin area behind the API token:
+  jobs, backfills, settings, logs. Light and dark themes, usable on a phone.
+  Then the `murmur.gabe.beer` route.
 
 ## 0.8.0 - hardening
 
