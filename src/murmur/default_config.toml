@@ -1,0 +1,72 @@
+# Packaged defaults. A user file (./murmur.toml, MURMUR_CONFIG, or --config)
+# is merged over these, so it only needs the keys it changes.
+
+data_dir = "data"               # store at <data_dir>/murmur.sqlite, exports at <data_dir>/published/
+timezone = "America/New_York"   # the calendar that defines a "day"
+
+[news]
+max_articles = 20               # per ticker per fetch
+
+[sentiment]
+model = "ProsusAI/finbert"
+batch_size = 32
+
+[universe]
+# "static": the fixed list below. 0.2.0 adds "marketcap" (SEC ticker list ranked
+# by market cap, rebalanced monthly). Membership is recorded in the store per
+# day either way, so analysis never reads this list directly.
+source = "static"
+
+[universe.static]
+# Temporary seed: the 50 tickers from the original settings.json.
+# Tickers are SEC-style (BRK.B); price/news sources map them to their own symbols.
+AAPL = "Apple"
+MSFT = "Microsoft"
+GOOGL = "Alphabet (Google)"
+AMZN = "Amazon"
+NVDA = "NVIDIA"
+META = "Meta Platforms"
+"BRK.B" = "Berkshire Hathaway"
+TSLA = "Tesla"
+LLY = "Eli Lilly"
+V = "Visa"
+AVGO = "Broadcom"
+UNH = "UnitedHealth"
+JPM = "JPMorgan Chase"
+WMT = "Walmart"
+XOM = "Exxon Mobil"
+MA = "Mastercard"
+JNJ = "Johnson & Johnson"
+PG = "Procter & Gamble"
+ORCL = "Oracle"
+HD = "Home Depot"
+ADBE = "Adobe"
+CVX = "Chevron"
+COST = "Costco"
+MRK = "Merck"
+KO = "Coca-Cola"
+ABBV = "AbbVie"
+BAC = "Bank of America"
+PEP = "Pepsico"
+CRM = "Salesforce"
+NFLX = "Netflix"
+MCD = "McDonalds"
+AMD = "AMD"
+CSCO = "Cisco"
+TMO = "Thermo Fisher Scientific"
+INTC = "Intel"
+ABT = "Abbott Laboratories"
+TMUS = "T-Mobile"
+PFE = "Pfizer"
+CMCSA = "Comcast"
+DIS = "Walt Disney"
+NKE = "Nike"
+DHR = "Danaher"
+INTU = "Intuit"
+VZ = "Verizon"
+WFC = "Wells Fargo"
+PM = "Philip Morris"
+QCOM = "QUALCOMM"
+AMGN = "Amgen"
+IBM = "IBM"
+TXN = "Texas Instruments"
