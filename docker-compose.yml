@@ -1,6 +1,7 @@
 # Murmur on gabe-server. Lives at /home/gabe/murmur/ with:
-#   ./data/            the store, exports, heartbeat and the Hugging Face cache (bind mount)
-#   ./config/murmur.toml   overrides over the packaged defaults (may be empty)
+#   ./data/            the store, exports, settings.toml (edited via the API), heartbeat,
+#                      job backups and the Hugging Face cache (bind mount)
+#   ./config/murmur.toml   ops overrides over the packaged defaults (may be empty; read-only)
 # The image is pulled from ghcr.io (built by .github/workflows/image.yml), so
 # docker-autopatch keeps it updated; `docker compose build` works too.
 name: murmur
@@ -12,8 +13,14 @@ services:
     container_name: murmur
     restart: unless-stopped
     user: "1000:1000"
-    # API keys for the optional sources (MURMUR_FINNHUB_API_KEY, MURMUR_POLYGON_API_KEY)
-    # live in ./.env, which is never committed; the collect script strips it to .env.example.
+    # The API (and /docs) on the LAN. A Caddy hostname comes with the web UI.
+    ports:
+      - "8100:8100"
+    # A job in flight (FinBERT on a chunk of headlines) needs a moment to stop cleanly.
+    stop_grace_period: 60s
+    # Secrets live in ./.env, never committed (the collect script strips it to .env.example):
+    #   MURMUR_API_TOKEN          bearer token for POST/PUT/DELETE; writes are refused without it
+    #   MURMUR_FINNHUB_API_KEY, MURMUR_POLYGON_API_KEY   optional sources
     env_file:
       - path: .env
         required: false

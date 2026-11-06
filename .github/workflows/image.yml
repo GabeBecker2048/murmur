@@ -27,5 +27,15 @@ jobs:
       - name: Smoke test
         run: |
           docker run --rm murmur:ci murmur --version
-          docker run --rm murmur:ci python -c "import murmur.cli, murmur.scheduler; print('imports ok')"
-          docker run --rm murmur:ci sh -c 'murmur health; test $? -eq 1'   # no heartbeat yet -> 1
+          docker run --rm murmur:ci python -c "import murmur.cli, murmur.scheduler, murmur.api.app; print('imports ok')"
+          docker run -d --name smoke -p 8100:8100 murmur:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8100/api/v1/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8100/api/v1/health
+          curl -fsS http://127.0.0.1:8100/api/v1/status | head -c 300; echo
+          docker exec smoke murmur health
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8100/api/v1/jobs -H 'content-type: application/json' -d '{"type":"export"}')" = "503"
+          docker stop -t 30 smoke
+          docker logs smoke | tail -5

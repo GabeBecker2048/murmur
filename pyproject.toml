@@ -1,6 +1,6 @@
 [project]
 name = "murmur"
-version = "0.5.1"
+version = "0.6.0"
 description = "Daily news-sentiment vs stock-return pipeline for the largest US companies."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,13 +18,16 @@ dependencies = [
     "matplotlib>=3.8",
     "exchange-calendars>=4.5",
     "pyarrow>=17",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "tomli-w>=1.0",
 ]
 
 [project.scripts]
 murmur = "murmur.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8"]
+dev = ["pytest>=8", "ruff>=0.8", "httpx>=0.27"]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -47,6 +50,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection puts calls in defaults on purpose.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.params.Depends"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

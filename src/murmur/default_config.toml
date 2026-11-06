@@ -45,6 +45,12 @@ time = "18:00"                  # local time in `timezone`, every day incl. week
 retries = 3                     # extra attempts when a stage fails
 retry_delay_minutes = 20
 
+[api]
+host = "0.0.0.0"
+port = 8100
+# The bearer token for POST/PUT/DELETE comes from MURMUR_API_TOKEN (never a file).
+# MURMUR_CORS_ORIGINS (comma-separated) enables CORS for a UI served elsewhere.
+
 [universe.static]
 # The 50 tickers from the original settings.json, used when source = "static".
 # Tickers use the SEC/Yahoo form with a dash for share classes (BRK-B).

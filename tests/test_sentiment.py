@@ -58,7 +58,8 @@ def test_cli_and_sources_do_not_import_torch():
         "import sys, murmur.cli, murmur.pipeline, murmur.sentiment, murmur.scheduler, "
         "murmur.universe, murmur.sources.yahoo_news, murmur.sources.yfinance_prices, "
         "murmur.sources.yahoo_screener, murmur.sources.sec, murmur.export; "
-        "bad = {m for m in ('torch', 'transformers', 'matplotlib') if m in sys.modules}; "
+        "bad = {m for m in ('torch', 'transformers', 'matplotlib', 'fastapi', 'uvicorn') "
+        "if m in sys.modules}; "
         "sys.exit(f'imported {bad}' if bad else 0)"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
