@@ -123,7 +123,8 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert m100["m100/2026/11/202611.constituents.parquet"]["date"] == "2026-11"
     charts = [e for e in index["datasets"]["correlations"]["files"] if e["format"] == "png"]
     assert {e["table"] for e in charts} == {"charts"}
-    assert index["datasets"]["news"]["license"]["name"] == "CC BY-NC-SA 4.0"
+    assert index["datasets"]["news"]["license"]["name"] == "CC BY 4.0"
+    assert "finbert" in index["datasets"]["news"]["license"]["attribution"]
 
 
 def test_index_name_follows_config(store, scorer, cfg, tmp_path):  # noqa: F811
@@ -327,13 +328,12 @@ def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
     monthly = read_metadata(base / "m100/2026/11/202611.constituents.parquet")
     assert monthly["license"] == "CC BY 4.0" and monthly["murmur_period"] == "2026-11"
     compacted = read_metadata(base / "news/2026/10/202610.articles.parquet")
-    assert compacted["license"] == "CC BY-NC-SA 4.0" and compacted["murmur_table"] == "articles"
+    assert compacted["license"] == "CC BY 4.0" and compacted["murmur_table"] == "articles"
+    assert "does not extend to its outputs" in compacted["notice"]
     assert compacted["murmur_period"] == "2026-10"
     # a second compaction (a later backfill) keeps the metadata
     export_day(store, cfg, oct30, today=TODAY)
-    assert (
-        read_metadata(base / "news/2026/10/202610.articles.parquet")["license"] == "CC BY-NC-SA 4.0"
-    )
+    assert read_metadata(base / "news/2026/10/202610.articles.parquet")["license"] == "CC BY 4.0"
 
 
 def test_constituents_are_rounded(store, cfg):  # noqa: F811

@@ -2,9 +2,11 @@
 every published file, and the rounding applied to market caps and weights before
 they are served or exported.
 
-The index is Murmur's own compilation and is CC BY 4.0. Prices (with the returns
-computed from them) are someone else's facts collected under their terms, so that
-table carries no license from Murmur, only a notice. Caps and weights are rounded
+Everything Murmur compiles or computes is CC BY 4.0, including the tables that carry
+FinBERT scores: the model's CC BY-NC-SA license governs the weights, not their
+outputs. Prices (with the returns computed from them) are someone else's facts
+collected under their terms, so that table carries no license from Murmur, only a
+notice. Caps and weights are rounded
 so a published index can never stand in for a close: a cap to three significant
 figures and a weight to four decimals recover a price to about a tenth of a percent
 at best, the precision of a newspaper, not of a feed.
@@ -24,7 +26,6 @@ WEIGHT_DECIMALS = 4
 ROUNDED_KEYS = ("market_cap", "weight")
 
 CC_BY_URL = "https://creativecommons.org/licenses/by/4.0/"
-CC_BY_NC_SA_URL = "https://creativecommons.org/licenses/by-nc-sa/4.0/"
 YAHOO_TERMS_URL = "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html"
 MURMUR = "Murmur (github.com/GabeBecker2048/murmur)"
 
@@ -43,15 +44,21 @@ def cc_by(contact: str) -> dict:
     }
 
 
-def cc_by_nc_sa(contact: str) -> dict:
+def cc_by_scored(contact: str) -> dict:
+    """The tables that carry FinBERT scores: CC BY 4.0 on Murmur's compilation. The model
+    is CC BY-NC-SA 4.0, but that license governs the weights, which Murmur runs
+    non-commercially and does not redistribute; it does not extend to the model's
+    outputs (Creative Commons' own position on model outputs), and a score is factual
+    data with no authorship of the model's publisher in it."""
     return {
-        "name": "CC BY-NC-SA 4.0",
-        "url": CC_BY_NC_SA_URL,
-        "attribution": f"{MURMUR}; scores by ProsusAI/finbert",
+        "name": "CC BY 4.0",
+        "url": CC_BY_URL,
+        "attribution": f"{MURMUR}; scores produced with ProsusAI/finbert",
         "note": (
-            "Scores come from FinBERT (ProsusAI/finbert), itself CC BY-NC-SA 4.0, so this table "
-            "is non-commercial and share-alike until a permissively licensed model replaces it. "
-            "Headlines and URLs are quoted for identification; they remain their publishers'."
+            "Murmur's compilation, licensed CC BY 4.0. Sentiment scores were produced with "
+            "FinBERT (ProsusAI/finbert, CC BY-NC-SA 4.0); the model is not redistributed and "
+            "its license does not extend to its outputs. Headlines and URLs are quoted for "
+            "identification; they remain their publishers'."
         ),
         "contact": contact,
     }

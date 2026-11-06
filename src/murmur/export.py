@@ -36,7 +36,7 @@ from pathlib import Path
 from murmur import __version__
 from murmur.clock import DAY, first_trading_day, month_key, today_in, utc_now_iso
 from murmur.config import Config
-from murmur.publish import cc_by, cc_by_nc_sa, file_metadata, round_cap, round_weight, source_terms
+from murmur.publish import cc_by, cc_by_scored, file_metadata, round_cap, round_weight, source_terms
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -289,7 +289,7 @@ def datasets(config: Config) -> list[Dataset]:
     ``config.index.name``."""
     index = config.index
     contact = config.datasets.contact
-    CC_BY, CC_BY_NC_SA, SOURCE_TERMS = cc_by(contact), cc_by_nc_sa(contact), source_terms(contact)
+    CC_BY, CC_BY_SCORED, SOURCE_TERMS = cc_by(contact), cc_by_scored(contact), source_terms(contact)
     return [
         Dataset(
             "companies",
@@ -338,7 +338,7 @@ def datasets(config: Config) -> list[Dataset]:
             "assigned to, and the sentiment scores where the headline has been scored.",
             DAILY,
             (Table("articles", ARTICLES_COLUMNS, ("article_id", "ticker"), q_articles),),
-            CC_BY_NC_SA,
+            CC_BY_SCORED,
         ),
         Dataset(
             "sentiment",
@@ -355,7 +355,7 @@ def datasets(config: Config) -> list[Dataset]:
                     q_sentiment,
                 ),
             ),
-            CC_BY_NC_SA,
+            CC_BY_SCORED,
         ),
         Dataset(
             "correlations",

@@ -390,9 +390,11 @@ index and may be smaller than it; a Murmur 250 is `[index] name = "m250"`,
 **Licenses.** Stated per dataset in `index.json`, stamped into every Parquet
 footer (`license`, `license_url`, `attribution`, `notice`, `contact`) and sent as
 `Link`/`X-Murmur-*` headers on every `/data` response, so a CSV download carries
-them too. `companies`, `m100` and `correlations` are CC BY 4.0: Murmur's own
-compilation and analysis. `news` and `sentiment` are CC BY-NC-SA 4.0 because the
-scores come from FinBERT, which is. `prices` (bars and returns) carries **no
+them too. Everything Murmur compiles or computes is CC BY 4.0: `companies`, `m100`,
+`correlations`, and also `news` and `sentiment`. The scores in those two come from
+FinBERT, whose CC BY-NC-SA license governs the model weights (run non-commercially,
+never redistributed) and not the model's outputs, which is Creative Commons' own
+position; the notice credits the model. `prices` (bars and returns) carries **no
 license from Murmur**: the bars are Yahoo Finance's facts collected under their
 terms and republished as-is for non-commercial research; use remains subject to
 the source's terms and the exchanges' policies, and a takedown contact is in the

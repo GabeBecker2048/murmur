@@ -400,11 +400,8 @@ def test_datasets_and_csv(client, provider):
     assert "Yahoo Finance" in r.headers["x-murmur-attribution"]
     # the CSV path carries the same headers (CSV has no footer)
     r = client.get(url + "?format=csv")
-    assert (
-        r.headers["x-murmur-license"] == "CC BY-NC-SA 4.0"
-        and "creativecommons" in r.headers["link"]
-    )
-    assert parquet.headers["x-murmur-license"] == "CC BY-NC-SA 4.0"
+    assert r.headers["x-murmur-license"] == "CC BY 4.0" and "creativecommons" in r.headers["link"]
+    assert parquet.headers["x-murmur-license"] == "CC BY 4.0"
 
 
 def test_private_datasets_need_the_token(tmp_path):

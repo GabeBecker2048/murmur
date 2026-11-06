@@ -19,7 +19,10 @@ Licensing made explicit, and prices published.
   apply** notice rather than CC BY: Murmur grants no rights in it, the bars
   come from Yahoo Finance via yfinance, non-commercial research, no warranty,
   takedown contact. `datasets.private` defaults to empty. The other five
-  datasets stay CC BY 4.0 (news and sentiment CC BY-NC-SA 4.0).
+  datasets are CC BY 4.0, now including `news` and `sentiment`: FinBERT's
+  CC BY-NC-SA license governs the model weights, which Murmur runs
+  non-commercially and does not redistribute, not the model's outputs
+  (Creative Commons' position); the notice says so and still credits the model.
 - `datasets.contact` (default `sec.contact`) printed in every notice.
 - Market caps are rounded to three significant figures and weights to four
   decimals wherever they are served or exported, so the index can never stand
