@@ -1,19 +1,24 @@
-"""Publish a trading day's tables as files under ``<data_dir>/published/``.
+"""Publish a trading day's tables under ``<data_dir>/published/``.
 
-Layout from ROADMAP.md: Parquet for the large tables (articles, prices,
-returns, sentiment), one file per day, compacted into one file per month once
-the month is over; CSV for the small ones (universe, daily analysis).
-``index.json`` lists every file as ``{table, date, path, format, rows}``.
+Layout: date first, one Parquet file per table.
+
+    index.json                                  every file: table, date, path, format, rows
+    2026/11/universe.parquet                    the month's universe
+    2026/11/05/prices.parquet                   one trading day, one file per table
+    2026/11/05/sentiment.png, correlation.png   charts
+    2026/10/prices.parquet                      a finished month, compacted from its days
+
+Finished months are compacted into one file per table; a later backfill is
+merged in on the next export, deduplicated by key. Files with no rows are
+never written.
 """
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
-import shutil
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -25,13 +30,6 @@ from murmur.universe import applicable_month
 
 log = logging.getLogger(__name__)
 
-PARQUET_TABLES = ("articles", "prices", "returns", "sentiment")
-KEYS = {
-    "articles": ["id"],
-    "prices": ["ticker", "date"],
-    "returns": ["ticker", "date"],
-    "sentiment": ["article_id", "ticker", "model"],
-}
 COLUMNS = {
     "articles": [
         "id",
@@ -71,36 +69,45 @@ COLUMNS = {
         "score",
         "model",
     ],
+    "window_sentiment": [
+        "date",
+        "ticker",
+        "window",
+        "n_articles",
+        "mean_score",
+        "overnight",
+        "intraday",
+        "daily",
+    ],
+    "correlations": [
+        "date",
+        "window",
+        "return_type",
+        "lag",
+        "scope",
+        "source",
+        "method",
+        "model",
+        "n",
+        "estimate",
+        "p_value",
+        "ci_low",
+        "ci_high",
+        "tickers",
+        "computed_at",
+    ],
+    "universe": ["month", "rank", "ticker", "name", "market_cap", "cik"],
 }
-CORRELATION_COLUMNS = [
-    "date",
-    "window",
-    "return_type",
-    "lag",
-    "scope",
-    "source",
-    "method",
-    "model",
-    "n",
-    "estimate",
-    "p_value",
-    "ci_low",
-    "ci_high",
-    "tickers",
-    "computed_at",
-]
-
-
-def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence]) -> int:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(header)
-        for row in rows:
-            w.writerow(row)
-            n += 1
-    return n
+KEYS = {
+    "articles": ["id"],
+    "prices": ["ticker", "date"],
+    "returns": ["ticker", "date"],
+    "sentiment": ["article_id", "ticker", "model"],
+    "window_sentiment": ["date", "ticker", "window"],
+    "correlations": ["date", "window", "return_type", "lag", "scope", "source", "method", "model"],
+}
+DAY_TABLES = tuple(KEYS)
+"""Tables written per trading day and compacted per month, in this order."""
 
 
 def _write_parquet(path: Path, columns: Sequence[str], rows: list[tuple]) -> int:
@@ -116,8 +123,13 @@ def _rows(records: list[sqlite3.Row], columns: Sequence[str]) -> list[tuple]:
     return [tuple(r[c] for c in columns) for r in records]
 
 
-def _day_path(base: Path, table: str, day: date, suffix: str) -> Path:
-    return base / table / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}{suffix}"
+def day_dir(base: Path, day: date) -> Path:
+    return base / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
+
+
+def month_dir(base: Path, month: str) -> Path:
+    year, mm = month.split("-")
+    return base / year / mm
 
 
 def export_day(store: Store, config: Config, day: date, today: date | None = None) -> list[Path]:
@@ -127,54 +139,37 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
     today = today or today_in(config.timezone)
     written: list[Path] = []
 
-    members = store.universe_for(iso)
+    month = applicable_month(day)
+    members = store.universe_month(month) or store.universe_for(iso)
     if members:
-        p = base / "universe" / f"{applicable_month(day)}.csv"
-        _write_csv(
+        p = month_dir(base, month) / "universe.parquet"
+        _write_parquet(
             p,
-            ["ticker", "name", "market_cap", "rank"],
-            [(m.ticker, m.name, m.market_cap, m.rank) for m in members],
+            COLUMNS["universe"],
+            [(month, m.rank, m.ticker, m.name, m.market_cap, m.cik) for m in members],
         )
         written.append(p)
 
+    correlations = store.correlations_on(iso)
     tables = {
-        "articles": store.articles_on(iso),
-        "prices": store.prices_on(iso),
-        "returns": store.returns_on(iso),
-        "sentiment": store.sentiment_on(iso, model),
+        "articles": _rows(store.articles_on(iso), COLUMNS["articles"]),
+        "prices": _rows(store.prices_on(iso), COLUMNS["prices"]),
+        "returns": _rows(store.returns_on(iso), COLUMNS["returns"]),
+        "sentiment": _rows(store.sentiment_on(iso, model), COLUMNS["sentiment"]),
+        "window_sentiment": _per_ticker_table(store, iso, model),
+        "correlations": _rows(correlations, COLUMNS["correlations"]),
     }
-    # A file with no rows is never written (and a stale one from an earlier
-    # export is removed), so the tree only lists days that have data.
-    for table, records in tables.items():
-        p = _day_path(base, table, day, ".parquet")
-        rows = _rows(records, COLUMNS[table])
+    # A file with no rows is never written, and a stale one is removed, so the
+    # tree only lists days that have data.
+    for table, rows in tables.items():
+        p = day_dir(base, day) / f"{table}.parquet"
         if rows:
             _write_parquet(p, COLUMNS[table], rows)
             written.append(p)
         else:
             p.unlink(missing_ok=True)
 
-    correlations = store.correlations_on(iso)
-    p = _day_path(base, "analysis/daily", day, ".csv")
-    if correlations:
-        _write_csv(p, CORRELATION_COLUMNS, _rows(correlations, CORRELATION_COLUMNS))
-        written.append(p)
-    else:
-        p.unlink(missing_ok=True)
-
-    per_ticker = _per_ticker_table(store, iso, model)
-    p = _day_path(base, "analysis/daily", day, "-tickers.csv")
-    if per_ticker:
-        _write_csv(
-            p,
-            ["ticker", "window", "n_articles", "mean_score", "overnight", "intraday", "daily"],
-            per_ticker,
-        )
-        written.append(p)
-    else:
-        p.unlink(missing_ok=True)
-
-    written += _charts(base, day, per_ticker, correlations)
+    written += _charts(base, day, tables["window_sentiment"], correlations)
     written += compact_finished_months(base, month_key(today))
     _write_index(base)
     written.append(base / "index.json")
@@ -189,6 +184,7 @@ def _per_ticker_table(store: Store, iso: str, model: str) -> list[tuple]:
         ret = returns.get(r["ticker"])
         rows.append(
             (
+                iso,
                 r["ticker"],
                 r["window"],
                 r["n_articles"],
@@ -202,7 +198,8 @@ def _per_ticker_table(store: Store, iso: str, model: str) -> list[tuple]:
 
 
 def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> list[Path]:
-    day_rows = [r for r in per_ticker if r[1] == DAY]
+    # per_ticker columns: date, ticker, window, n_articles, mean_score, overnight, intraday, daily
+    day_rows = [r for r in per_ticker if r[2] == DAY]
     if not day_rows:
         return []
     import matplotlib
@@ -211,8 +208,10 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
     import matplotlib.pyplot as plt
 
     written = []
-    tickers = [r[0] for r in day_rows]
-    scores = [r[3] for r in day_rows]
+    out = day_dir(base, day)
+    out.mkdir(parents=True, exist_ok=True)
+    tickers = [r[1] for r in day_rows]
+    scores = [r[4] for r in day_rows]
 
     fig, ax = plt.subplots(figsize=(max(8, 0.22 * len(tickers)), 4))
     ax.bar(tickers, scores, color=["#2a9d8f" if s >= 0 else "#e76f51" for s in scores])
@@ -221,12 +220,12 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
     ax.set_title(f"Headline sentiment by company, previous close to close, {day.isoformat()}")
     ax.tick_params(axis="x", rotation=80, labelsize=7)
     fig.tight_layout()
-    p = _day_path(base, "analysis/daily", day, "-sentiment.png")
+    p = out / "sentiment.png"
     fig.savefig(p, dpi=120)
     plt.close(fig)
     written.append(p)
 
-    pairs = [(r[3], r[6], r[0]) for r in day_rows if r[6] is not None]
+    pairs = [(r[4], r[7], r[1]) for r in day_rows if r[7] is not None]
     if len(pairs) >= 2:
         xs = [p[0] for p in pairs]
         ys = [p[1] * 100 for p in pairs]
@@ -259,7 +258,7 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
         ax.set_ylabel("daily return (%)")
         ax.set_title(f"Sentiment vs daily return, {day.isoformat()}\n{subtitle}")
         fig.tight_layout()
-        p = _day_path(base, "analysis/daily", day, "-correlation.png")
+        p = out / "correlation.png"
         fig.savefig(p, dpi=120)
         plt.close(fig)
         written.append(p)
@@ -270,20 +269,13 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
 
 
 def compact_finished_months(base: Path, current_month: str) -> list[Path]:
-    """Fold each finished month's daily Parquet files into ``table/YYYY/MM.parquet``.
-
-    A daily file written later for a compacted month (a backfill) is folded in
-    on the next call: the month file is re-read, rows deduplicated by key.
-    """
+    """Fold each finished month's daily files into ``YYYY/MM/<table>.parquet``."""
     written = []
-    for table in PARQUET_TABLES:
-        root = base / table
-        if not root.is_dir():
+    for mdir in sorted(p for p in base.glob("*/*") if p.is_dir()):
+        month = f"{mdir.parent.name}-{mdir.name}"
+        if month >= current_month or not any(p.is_dir() for p in mdir.iterdir()):
             continue
-        for month_dir in sorted(p for p in root.glob("*/*") if p.is_dir()):
-            month = f"{month_dir.parent.name}-{month_dir.name}"
-            if month >= current_month:
-                continue
+        for table in DAY_TABLES:
             out = compact_month(base, table, month)
             if out:
                 written.append(out)
@@ -291,12 +283,13 @@ def compact_finished_months(base: Path, current_month: str) -> list[Path]:
 
 
 def compact_month(base: Path, table: str, month: str) -> Path | None:
+    """Merge a month's ``DD/<table>.parquet`` files (and an existing month file)
+    into ``YYYY/MM/<table>.parquet``, deduplicated by key."""
     import pandas as pd
 
-    year, mm = month.split("-")
-    month_dir = base / table / year / mm
-    month_file = base / table / year / f"{mm}.parquet"
-    daily = sorted(month_dir.glob("*.parquet")) if month_dir.is_dir() else []
+    mdir = month_dir(base, month)
+    month_file = mdir / f"{table}.parquet"
+    daily = sorted(p for p in mdir.glob(f"*/{table}.parquet") if p.parent.is_dir())
     if not daily:
         return None
     frames = [pd.read_parquet(p) for p in daily]
@@ -307,8 +300,9 @@ def compact_month(base: Path, table: str, month: str) -> Path | None:
     df.to_parquet(month_file, index=False, engine="pyarrow")
     for p in daily:
         p.unlink()
-    shutil.rmtree(month_dir, ignore_errors=True)
-    log.info("compacted %s/%s: %d rows from %d daily files", table, month, len(df), len(daily))
+        if not any(p.parent.iterdir()):
+            p.parent.rmdir()
+    log.info("compacted %s %s: %d rows from %d daily files", month, table, len(df), len(daily))
     return month_file
 
 
@@ -316,9 +310,6 @@ def compact_month(base: Path, table: str, month: str) -> Path | None:
 
 
 def _row_count(path: Path) -> int | None:
-    if path.suffix == ".csv":
-        with path.open(encoding="utf-8") as f:
-            return max(sum(1 for _ in f) - 1, 0)
     if path.suffix == ".parquet":
         import pyarrow.parquet as pq
 
@@ -328,17 +319,13 @@ def _row_count(path: Path) -> int | None:
 
 def _entry(base: Path, path: Path) -> dict:
     rel = path.relative_to(base)
-    parts = rel.parts
-    if parts[0] == "universe":
-        table, day = "universe", rel.stem
-    elif parts[0] == "analysis":
-        table, day = "/".join(parts[:2]), f"{parts[2]}-{parts[3]}-{rel.stem[:2]}"
-    elif len(parts) == 3:  # table/YYYY/MM.parquet (compacted month)
-        table, day = parts[0], f"{parts[1]}-{rel.stem}"
+    parts = rel.parts  # YYYY/MM/<table>.parquet or YYYY/MM/DD/<table>.<ext>
+    if len(parts) == 3:
+        day = f"{parts[0]}-{parts[1]}"
     else:
-        table, day = parts[0], f"{parts[1]}-{parts[2]}-{rel.stem[:2]}"
+        day = f"{parts[0]}-{parts[1]}-{parts[2]}"
     return {
-        "table": table,
+        "table": rel.stem,
         "date": day,
         "path": rel.as_posix(),
         "format": path.suffix.lstrip("."),

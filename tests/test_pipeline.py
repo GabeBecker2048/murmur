@@ -165,8 +165,8 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
         # the fake Nov 4 bar opens at its close, so intraday is flat and undefined: daily only
         assert len(store.correlations_on("2026-11-04")) == 2
         assert len(store.correlations_on("2026-11-05")) == 4
-        assert (cfg.published_dir / "analysis/daily/2026/11/04.csv").exists()
-        assert (cfg.published_dir / "analysis/daily/2026/11/05.csv").exists()
+        assert (cfg.published_dir / "2026/11/04/correlations.parquet").exists()
+        assert (cfg.published_dir / "2026/11/05/correlations.parquet").exists()
 
         # nothing left to backfill
         assert pipeline.backfill_days(store, nov5) == []

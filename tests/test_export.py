@@ -24,18 +24,18 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     base = cfg.published_dir
     rel = sorted(p.relative_to(base).as_posix() for p in written)
     assert rel == [
-        "analysis/daily/2026/11/05-correlation.png",
-        "analysis/daily/2026/11/05-sentiment.png",
-        "analysis/daily/2026/11/05-tickers.csv",
-        "analysis/daily/2026/11/05.csv",
-        "articles/2026/11/05.parquet",
+        "2026/11/05/articles.parquet",
+        "2026/11/05/correlation.png",
+        "2026/11/05/correlations.parquet",
+        "2026/11/05/prices.parquet",
+        "2026/11/05/returns.parquet",
+        "2026/11/05/sentiment.parquet",
+        "2026/11/05/sentiment.png",
+        "2026/11/05/window_sentiment.parquet",
+        "2026/11/universe.parquet",
         "index.json",
-        "prices/2026/11/05.parquet",
-        "returns/2026/11/05.parquet",
-        "sentiment/2026/11/05.parquet",
-        "universe/2026-11.csv",
     ]
-    articles = pd.read_parquet(base / "articles/2026/11/05.parquet")
+    articles = pd.read_parquet(base / "2026/11/05/articles.parquet")
     assert len(articles) == 8 and set(articles["window"]) == {"overnight", "intraday"}
     assert list(articles.columns)[:6] == [
         "id",
@@ -45,28 +45,39 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
         "trading_day",
         "window",
     ]
-    returns = pd.read_parquet(base / "returns/2026/11/05.parquet")
+    returns = pd.read_parquet(base / "2026/11/05/returns.parquet")
     assert len(returns) == 4 and set(returns.columns) >= {"overnight", "intraday", "daily"}
-    sentiment = pd.read_parquet(base / "sentiment/2026/11/05.parquet")
-    assert len(sentiment) == 8
-    corr = (base / "analysis/daily/2026/11/05.csv").read_text().splitlines()
-    assert corr[0].startswith("date,window,return_type,lag,") and len(corr) == 7
-    tickers_csv = (base / "analysis/daily/2026/11/05-tickers.csv").read_text().splitlines()
-    assert tickers_csv[0] == "ticker,window,n_articles,mean_score,overnight,intraday,daily"
-    assert len(tickers_csv) == 13
+    assert len(pd.read_parquet(base / "2026/11/05/sentiment.parquet")) == 8
+    corr = pd.read_parquet(base / "2026/11/05/correlations.parquet")
+    assert len(corr) == 6 and list(corr.columns)[:4] == ["date", "window", "return_type", "lag"]
+    ws = pd.read_parquet(base / "2026/11/05/window_sentiment.parquet")
+    assert len(ws) == 12 and list(ws.columns) == [
+        "date",
+        "ticker",
+        "window",
+        "n_articles",
+        "mean_score",
+        "overnight",
+        "intraday",
+        "daily",
+    ]
+    universe = pd.read_parquet(base / "2026/11/universe.parquet")
+    assert list(universe.columns) == ["month", "rank", "ticker", "name", "market_cap", "cik"]
+    assert len(universe) == 4
 
     index = json.loads((base / "index.json").read_text())
     assert index["murmur_version"] == "0.3.0"
     entries = {e["path"]: e for e in index["files"]}
-    assert entries["returns/2026/11/05.parquet"] == {
+    assert entries["2026/11/05/returns.parquet"] == {
         "table": "returns",
         "date": "2026-11-05",
-        "path": "returns/2026/11/05.parquet",
+        "path": "2026/11/05/returns.parquet",
         "format": "parquet",
         "rows": 4,
     }
-    assert entries["analysis/daily/2026/11/05.csv"]["rows"] == 6
-    assert entries["universe/2026-11.csv"]["date"] == "2026-11"
+    assert entries["2026/11/universe.parquet"]["date"] == "2026-11"
+    assert entries["2026/11/05/sentiment.png"]["format"] == "png"
+    assert "index.json" not in entries
 
 
 def test_non_trading_day_writes_no_empty_files(store, scorer, cfg):  # noqa: F811
@@ -75,20 +86,20 @@ def test_non_trading_day_writes_no_empty_files(store, scorer, cfg):  # noqa: F81
     analyze_day(store, cfg, SATURDAY, list(COMPANIES))
     written = export_day(store, cfg, SATURDAY, today=TODAY)
     names = sorted(p.name for p in written)
-    assert names == ["2026-11.csv", "index.json"]  # only the universe has rows
-    assert not (cfg.published_dir / "articles/2026/11/07.parquet").exists()
+    assert names == ["index.json", "universe.parquet"]  # only the universe has rows
+    assert not (cfg.published_dir / "2026/11/07").exists()
 
 
 def test_stale_empty_files_are_removed(store, scorer, cfg):  # noqa: F811
     prepared(store, scorer, cfg)
     export_day(store, cfg, DAY_, today=TODAY)
-    corr = cfg.published_dir / "analysis/daily/2026/11/05.csv"
+    corr = cfg.published_dir / "2026/11/05/correlations.parquet"
     assert corr.exists()
     store.conn.execute("DELETE FROM correlations")
     export_day(store, cfg, DAY_, today=TODAY)
     assert not corr.exists()
     index = {e["path"] for e in json.loads((cfg.published_dir / "index.json").read_text())["files"]}
-    assert "analysis/daily/2026/11/05.csv" not in index
+    assert "2026/11/05/correlations.parquet" not in index
 
 
 def test_monthly_compaction(store, scorer, cfg):  # noqa: F811
@@ -98,37 +109,46 @@ def test_monthly_compaction(store, scorer, cfg):  # noqa: F811
     written = export_day(store, cfg, oct30, today=TODAY)
     base = cfg.published_dir
     rel = {p.relative_to(base).as_posix() for p in written}
-    assert "articles/2026/10.parquet" in rel and "prices/2026/10.parquet" in rel
-    assert not (base / "articles/2026/10").exists()
-    assert not (base / "articles/2026/10/30.parquet").exists()
-    assert len(pd.read_parquet(base / "articles/2026/10.parquet")) == 8
-    # small tables stay daily CSV
-    assert (base / "analysis/daily/2026/10/30.csv").exists()
+    assert {
+        "2026/10/articles.parquet",
+        "2026/10/prices.parquet",
+        "2026/10/correlations.parquet",
+    } <= rel
+    assert not (base / "2026/10/30/articles.parquet").exists()
+    # the day directory keeps only the charts
+    assert sorted(p.name for p in (base / "2026/10/30").iterdir()) == [
+        "correlation.png",
+        "sentiment.png",
+    ]
+    assert len(pd.read_parquet(base / "2026/10/articles.parquet")) == 8
+    assert len(pd.read_parquet(base / "2026/10/universe.parquet")) == 4
     index = {e["path"]: e for e in json.loads((base / "index.json").read_text())["files"]}
-    assert index["articles/2026/10.parquet"] == {
+    assert index["2026/10/articles.parquet"] == {
         "table": "articles",
         "date": "2026-10",
-        "path": "articles/2026/10.parquet",
+        "path": "2026/10/articles.parquet",
         "format": "parquet",
         "rows": 8,
     }
+    assert index["2026/10/30/sentiment.png"]["date"] == "2026-10-30"
 
     # a later backfill of the same month is folded in without duplicates
     export_day(store, cfg, oct30, today=TODAY)
-    assert len(pd.read_parquet(base / "articles/2026/10.parquet")) == 8
-    assert len(pd.read_parquet(base / "returns/2026/10.parquet")) == 4
+    assert len(pd.read_parquet(base / "2026/10/articles.parquet")) == 8
+    assert len(pd.read_parquet(base / "2026/10/returns.parquet")) == 4
+    assert len(pd.read_parquet(base / "2026/10/correlations.parquet")) == 6
     assert compact_month(base, "articles", "2026-10") is None  # nothing daily left
 
 
 def test_current_month_is_not_compacted(store, scorer, cfg):  # noqa: F811
     prepared(store, scorer, cfg)
     export_day(store, cfg, DAY_, today=TODAY)
-    assert (cfg.published_dir / "articles/2026/11/05.parquet").exists()
-    assert not (cfg.published_dir / "articles/2026/11.parquet").exists()
+    assert (cfg.published_dir / "2026/11/05/articles.parquet").exists()
+    assert not (cfg.published_dir / "2026/11/articles.parquet").exists()
 
 
 def test_export_all(store, scorer, cfg):  # noqa: F811
     prepared(store, scorer, cfg)
     written = pipeline.export_all(store, cfg)
     days = {p.relative_to(cfg.published_dir).as_posix() for p in written}
-    assert "prices/2026/11/04.parquet" in days and "prices/2026/11/05.parquet" in days
+    assert "2026/11/04/prices.parquet" in days and "2026/11/05/prices.parquet" in days
