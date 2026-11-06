@@ -171,7 +171,7 @@ def _charts(base: Path, day: date, per_ticker: list[tuple], correlations) -> lis
         ys = [p[1] * 100 for p in pairs]
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.scatter(xs, ys, color="#264653")
-        for x, y, t in pairs:
+        for x, y, t in zip(xs, ys, (p[2] for p in pairs), strict=True):
             ax.annotate(t, (x, y), fontsize=6, xytext=(2, 2), textcoords="offset points")
         if len(set(xs)) > 1:
             import numpy as np

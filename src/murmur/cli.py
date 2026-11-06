@@ -45,7 +45,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("urllib3", "peewee", "yfinance", "transformers", "matplotlib"):
+    for noisy in (
+        "urllib3",
+        "httpx",
+        "httpx2",
+        "huggingface_hub",
+        "peewee",
+        "yfinance",
+        "transformers",
+        "matplotlib",
+    ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:

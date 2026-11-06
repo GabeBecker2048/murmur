@@ -34,7 +34,9 @@ class FinBertScorer:
     def __init__(self, model_name: str = "ProsusAI/finbert", batch_size: int = 32):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        from transformers.utils import logging as hf_logging
 
+        hf_logging.disable_progress_bar()
         self.model_name = model_name
         self.batch_size = batch_size
         self._torch = torch
