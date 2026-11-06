@@ -1,0 +1,11 @@
+# Copy to ./murmur.toml (gitignored) or point MURMUR_CONFIG / --config at it.
+# Only the keys you set are overridden; see src/murmur/default_config.toml
+# for everything available.
+
+data_dir = "data"
+
+[news]
+max_articles = 20
+
+[sentiment]
+batch_size = 32
