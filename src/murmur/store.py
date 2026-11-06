@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -122,6 +122,58 @@ MIGRATIONS: dict[int, str] = {
         stages      TEXT
     );
     CREATE INDEX idx_runs_date ON runs (date);
+    """,
+    3: """
+    ALTER TABLE articles ADD COLUMN trading_day TEXT;
+    ALTER TABLE articles ADD COLUMN window TEXT;
+    CREATE INDEX idx_articles_trading_day ON articles (trading_day, window);
+    CREATE TABLE window_sentiment (
+        date       TEXT NOT NULL,
+        window     TEXT NOT NULL,
+        ticker     TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        n_articles INTEGER NOT NULL,
+        mean_score REAL NOT NULL,
+        PRIMARY KEY (date, window, ticker, model)
+    );
+    CREATE TABLE returns (
+        ticker     TEXT NOT NULL,
+        date       TEXT NOT NULL,
+        prev_date  TEXT NOT NULL,
+        prev_close REAL NOT NULL,
+        open       REAL NOT NULL,
+        close      REAL NOT NULL,
+        overnight  REAL NOT NULL,
+        intraday   REAL NOT NULL,
+        daily      REAL NOT NULL,
+        PRIMARY KEY (ticker, date)
+    );
+    CREATE INDEX idx_returns_date ON returns (date);
+    CREATE TABLE correlations_v3 (
+        date        TEXT NOT NULL,
+        window      TEXT NOT NULL,
+        return_type TEXT NOT NULL,
+        lag         INTEGER NOT NULL,
+        scope       TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        method      TEXT NOT NULL,
+        model       TEXT NOT NULL,
+        n           INTEGER NOT NULL,
+        estimate    REAL NOT NULL,
+        p_value     REAL NOT NULL,
+        ci_low      REAL,
+        ci_high     REAL,
+        tickers     TEXT NOT NULL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (date, window, return_type, lag, scope, source, method, model)
+    );
+    INSERT INTO correlations_v3
+        SELECT date, 'day', 'daily', 0, scope, source, method, model, n, estimate, p_value,
+               ci_low, ci_high, tickers, computed_at
+        FROM correlations;
+    DROP TABLE correlations;
+    ALTER TABLE correlations_v3 RENAME TO correlations;
+    DROP TABLE daily_sentiment;
     """,
 }
 
@@ -338,23 +390,49 @@ class Store:
             "article_tickers",
             "prices",
             "sentiment",
-            "daily_sentiment",
+            "window_sentiment",
+            "returns",
             "correlations",
             "runs",
         }:
             raise ValueError(table)
         return self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
-    def articles_in_window(self, start_utc: str, end_utc: str) -> list[sqlite3.Row]:
-        """Articles published in ``[start, end)`` with their tickers comma-joined."""
+    def articles_without_window(self) -> list[tuple[int, str]]:
+        rows = self.conn.execute(
+            """SELECT id, published_at FROM articles
+               WHERE published_at IS NOT NULL AND trading_day IS NULL ORDER BY id"""
+        )
+        return [(r["id"], r["published_at"]) for r in rows]
+
+    def set_article_windows(self, rows: Iterable[tuple[str, str, int]]) -> None:
+        """``(trading_day, window, article_id)`` triples."""
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.executemany(
+                "UPDATE articles SET trading_day = ?, window = ? WHERE id = ?", list(rows)
+            )
+
+    def articles_on(self, trading_day: str) -> list[sqlite3.Row]:
+        """Articles of a trading day (both windows) with their tickers comma-joined."""
         return self.conn.execute(
-            """SELECT a.id, a.url, a.title, a.published_at, a.source, a.provider, a.content_type,
-                      a.first_seen_at, group_concat(t.ticker, ',') AS tickers
+            """SELECT a.id, a.url, a.title, a.published_at, a.trading_day, a.window, a.source,
+                      a.provider, a.content_type, a.first_seen_at,
+                      group_concat(t.ticker, ',') AS tickers
                FROM articles a JOIN article_tickers t ON t.article_id = a.id
-               WHERE a.published_at >= ? AND a.published_at < ?
+               WHERE a.trading_day = ?
                GROUP BY a.id ORDER BY a.published_at, a.id""",
-            (start_utc, end_utc),
+            (trading_day,),
         ).fetchall()
+
+    def known_days(self) -> list[str]:
+        """Every date that has price bars or articles assigned to it."""
+        rows = self.conn.execute(
+            """SELECT date FROM prices
+               UNION SELECT trading_day FROM articles WHERE trading_day IS NOT NULL
+               ORDER BY 1"""
+        )
+        return [r[0] for r in rows]
 
     # -- prices ---------------------------------------------------------------
 
@@ -384,20 +462,8 @@ class Store:
             (date,),
         ).fetchall()
 
-    def last_two_closes(self, date: str) -> dict[str, list[tuple[str, float]]]:
-        """For each ticker, the two latest ``(date, close)`` on or before ``date``, newest first."""
-        rows = self.conn.execute(
-            """SELECT ticker, date, close FROM (
-                 SELECT ticker, date, close,
-                        row_number() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
-                 FROM prices WHERE date <= ?)
-               WHERE rn <= 2 ORDER BY ticker, date DESC""",
-            (date,),
-        )
-        out: dict[str, list[tuple[str, float]]] = {}
-        for r in rows:
-            out.setdefault(r["ticker"], []).append((r["date"], r["close"]))
-        return out
+    def bars_on(self, date: str) -> dict[str, sqlite3.Row]:
+        return {r["ticker"]: r for r in self.prices_on(date)}
 
     # -- sentiment ------------------------------------------------------------
 
@@ -422,65 +488,94 @@ class Store:
             )
         return len(rows)
 
-    def sentiment_in_window(self, start_utc: str, end_utc: str, model: str) -> list[sqlite3.Row]:
+    def sentiment_on(self, trading_day: str, model: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT s.article_id, t.ticker, a.published_at, s.positive, s.negative, s.neutral,
-                      s.label, s.score, s.model
+            """SELECT s.article_id, t.ticker, a.trading_day, a.window, a.published_at,
+                      s.positive, s.negative, s.neutral, s.label, s.score, s.model
                FROM sentiment s
                JOIN articles a ON a.id = s.article_id
                JOIN article_tickers t ON t.article_id = a.id
-               WHERE s.model = ? AND a.published_at >= ? AND a.published_at < ?
+               WHERE s.model = ? AND a.trading_day = ?
                ORDER BY t.ticker, a.published_at, s.article_id""",
-            (model, start_utc, end_utc),
+            (model, trading_day),
         ).fetchall()
 
-    def ticker_scores_in_window(
-        self, start_utc: str, end_utc: str, model: str
+    def ticker_scores(
+        self, trading_day: str, windows: tuple[str, ...], model: str
     ) -> dict[str, tuple[int, float]]:
-        """``ticker -> (n_articles, mean_score)`` over articles published in the window."""
+        """``ticker -> (n_articles, mean_score)`` over the given windows of a trading day."""
+        marks = ",".join("?" * len(windows))
         rows = self.conn.execute(
-            """SELECT t.ticker, count(*) AS n, avg(s.score) AS mean_score
-               FROM sentiment s
-               JOIN articles a ON a.id = s.article_id
-               JOIN article_tickers t ON t.article_id = a.id
-               WHERE s.model = ? AND a.published_at >= ? AND a.published_at < ?
-               GROUP BY t.ticker""",
-            (model, start_utc, end_utc),
+            f"""SELECT t.ticker, count(*) AS n, avg(s.score) AS mean_score
+                FROM sentiment s
+                JOIN articles a ON a.id = s.article_id
+                JOIN article_tickers t ON t.article_id = a.id
+                WHERE s.model = ? AND a.trading_day = ? AND a.window IN ({marks})
+                GROUP BY t.ticker""",
+            (model, trading_day, *windows),
         )
         return {r["ticker"]: (r["n"], r["mean_score"]) for r in rows}
 
     # -- analysis results -----------------------------------------------------
 
-    def upsert_daily_sentiment(
-        self, date: str, model: str, per_ticker: dict[str, tuple[int, float]]
+    def upsert_window_sentiment(
+        self, date: str, window: str, model: str, per_ticker: dict[str, tuple[int, float]]
     ) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.executemany(
-                """INSERT INTO daily_sentiment (date, ticker, model, n_articles, mean_score)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT (date, ticker, model) DO UPDATE SET
+                """INSERT INTO window_sentiment (date, window, ticker, model, n_articles,
+                                                 mean_score)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (date, window, ticker, model) DO UPDATE SET
                      n_articles = excluded.n_articles, mean_score = excluded.mean_score""",
-                [(date, t, model, n, mean) for t, (n, mean) in per_ticker.items()],
+                [(date, window, t, model, n, mean) for t, (n, mean) in per_ticker.items()],
             )
 
-    def daily_sentiment_on(self, date: str, model: str) -> list[sqlite3.Row]:
+    def window_sentiment_on(self, date: str, model: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT date, ticker, model, n_articles, mean_score FROM daily_sentiment
-               WHERE date = ? AND model = ? ORDER BY ticker""",
+            """SELECT date, window, ticker, model, n_articles, mean_score FROM window_sentiment
+               WHERE date = ? AND model = ? ORDER BY ticker, window""",
             (date, model),
+        ).fetchall()
+
+    def upsert_returns(self, rows: Iterable[tuple]) -> int:
+        """``(ticker, date, prev_date, prev_close, open, close, overnight, intraday, daily)``."""
+        rows = list(rows)
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.executemany(
+                """INSERT INTO returns (ticker, date, prev_date, prev_close, open, close,
+                                        overnight, intraday, daily)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (ticker, date) DO UPDATE SET
+                     prev_date = excluded.prev_date, prev_close = excluded.prev_close,
+                     open = excluded.open, close = excluded.close,
+                     overnight = excluded.overnight, intraday = excluded.intraday,
+                     daily = excluded.daily""",
+                rows,
+            )
+        return len(rows)
+
+    def returns_on(self, date: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT ticker, date, prev_date, prev_close, open, close, overnight, intraday,
+                      daily FROM returns WHERE date = ? ORDER BY ticker""",
+            (date,),
         ).fetchall()
 
     def upsert_correlation(self, row: dict) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
             self.conn.execute(
-                """INSERT INTO correlations (date, window, scope, source, method, model, n,
-                                             estimate, p_value, ci_low, ci_high, tickers,
-                                             computed_at)
-                   VALUES (:date, :window, :scope, :source, :method, :model, :n, :estimate,
-                           :p_value, :ci_low, :ci_high, :tickers, :computed_at)
-                   ON CONFLICT (date, window, scope, source, method, model) DO UPDATE SET
+                """INSERT INTO correlations (date, window, return_type, lag, scope, source,
+                                             method, model, n, estimate, p_value, ci_low,
+                                             ci_high, tickers, computed_at)
+                   VALUES (:date, :window, :return_type, :lag, :scope, :source, :method,
+                           :model, :n, :estimate, :p_value, :ci_low, :ci_high, :tickers,
+                           :computed_at)
+                   ON CONFLICT (date, window, return_type, lag, scope, source, method, model)
+                   DO UPDATE SET
                      n = excluded.n, estimate = excluded.estimate, p_value = excluded.p_value,
                      ci_low = excluded.ci_low, ci_high = excluded.ci_high,
                      tickers = excluded.tickers, computed_at = excluded.computed_at""",
@@ -489,8 +584,9 @@ class Store:
 
     def correlations_on(self, date: str) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT date, window, scope, source, method, model, n, estimate, p_value,
-                      ci_low, ci_high, tickers, computed_at
-               FROM correlations WHERE date = ? ORDER BY window, scope, source, method""",
+            """SELECT date, window, return_type, lag, scope, source, method, model, n,
+                      estimate, p_value, ci_low, ci_high, tickers, computed_at
+               FROM correlations WHERE date = ?
+               ORDER BY window, return_type, lag, scope, source, method""",
             (date,),
         ).fetchall()
