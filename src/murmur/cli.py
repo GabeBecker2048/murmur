@@ -40,7 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("news", "fetch and store headlines for the universe")
     add("prices", "fetch and store daily bars for the universe")
     add("analyze", "score pending headlines, then compute the day's sentiment and correlations")
-    add("export", "write the day's published files")
+    e = add("export", "write the day's published files")
+    e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
     add("schedule", "run the daily job forever (the container's main process)", dated=False)
     r = add("runs", "list recent runs", dated=False)
     r.add_argument("--limit", type=int, default=20)
@@ -114,9 +115,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(pipeline.run_prices(store, config, day))
         elif args.command == "analyze":
             print(pipeline.run_sentiment(store, config))
-            print(pipeline.describe_analyze(pipeline.run_analyze(store, config, day)))
+            result = pipeline.run_analyze(store, config, day)
+            print(pipeline.describe_analyze(result))
+            for c in result.today.correlations:
+                ci = f" [{c.ci_low:+.3f}, {c.ci_high:+.3f}]" if c.ci_low is not None else ""
+                print(
+                    f"  {c.window:<9} {c.return_type:<9} {c.method:<8} "
+                    f"{c.estimate:+.3f}{ci}  p={c.p_value:.3f}  n={c.n}"
+                )
         elif args.command == "export":
-            for path in pipeline.run_export(store, config, day):
+            paths = (
+                pipeline.export_all(store, config)
+                if args.all
+                else pipeline.run_export(store, config, day)
+            )
+            for path in paths:
                 print(path)
         elif args.command == "runs":
             for r in store.recent_runs(args.limit):

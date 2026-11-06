@@ -7,12 +7,14 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.2.0, pre-public.** The pipeline runs daily: a market-cap universe
-of the 100 largest US companies rebalanced monthly, a scheduler with retries
-and a run log, and a Docker image for the server. Timing windows, lead/lag
-analysis, the API and the web UI arrive in later versions. The repository
-stays private until the original contributors agree to publish it, and the
-code is never published to PyPI.
+**Status: 0.3.0, pre-public.** The pipeline runs daily on the server with a
+market-cap universe of the 100 largest US companies. Headlines are bucketed
+into overnight and intraday news windows on the NYSE calendar, three returns
+are computed from open and close, and the published dataset is Parquet with
+monthly compaction. The lead/lag analysis (0.4.0), more sources, the API and
+the web UI arrive in later versions. The repository stays private until the
+original contributors agree to publish it, and the code is never published to
+PyPI.
 
 ## How it works
 
@@ -25,8 +27,8 @@ fails:
 | news | recent headlines for every ticker in the universe | Yahoo Finance via yfinance | `articles`, `article_tickers` |
 | prices | daily OHLCV bars for the last month, one request for all tickers | yfinance | `prices` |
 | sentiment | scores every headline not yet scored | FinBERT (`ProsusAI/finbert`), CPU | `sentiment` |
-| analyze | per-ticker mean sentiment for the day, daily return, Pearson + Spearman across tickers | scipy | `daily_sentiment`, `correlations` |
-| export | the day's tables as CSV plus two charts and `index.json` | | `<data_dir>/published/` |
+| analyze | windows for new articles, the three returns, per-window sentiment, Pearson + Spearman across tickers per window | scipy | `returns`, `window_sentiment`, `correlations` |
+| export | the day's tables as Parquet (CSV for the small ones), two charts and `index.json` | | `<data_dir>/published/` |
 
 Every write is an upsert, so running a day twice stores an article once and
 never rescores it, and every run is logged (`murmur runs`). Dates are calendar
@@ -58,10 +60,31 @@ SIGTERM. Each run also completes any trading day from the past week whose
 analysis is still missing but whose price bars have since arrived (Yahoo's
 bar for a day sometimes disappears for a while in the evening).
 
-In 0.1.0 the day's sentiment for a ticker is the mean of `positive − negative`
-over its headlines published that calendar day, and the return is
-`close / previous close − 1`. The overnight/intraday windows and the lead/lag
-analysis are 0.3.0 and 0.4.0.
+### Windows and returns
+
+Every article is assigned to one trading day and one news window by its
+publication time, on the NYSE calendar (holidays and early closes included):
+
+| window | from | to |
+|---|---|---|
+| overnight(t) | previous session's close (16:00 ET) | today's open (09:30 ET) |
+| intraday(t) | open | close |
+
+News after the close, over a weekend or on a holiday belongs to the next
+session's overnight window. "day" is both windows together. A ticker's
+sentiment for a window is the mean of `positive − negative` over its headlines
+in that window. Three returns are computed from the daily bars:
+
+| return | formula |
+|---|---|
+| overnight | open_t / close_t−1 − 1 |
+| intraday | close_t / open_t − 1 |
+| daily | close_t / close_t−1 − 1 |
+
+0.3.0 correlates each window with its matching return at lag 0 (overnight
+with overnight, intraday with intraday, day with daily) across the universe,
+Pearson and Spearman. The lags and rolling windows that answer the lead/lag
+question are 0.4.0.
 
 ## Install
 
@@ -132,34 +155,49 @@ Tickers everywhere use the SEC and Yahoo form with a dash (`BRK-B`).
 
 ## Data
 
-`data/murmur.sqlite` is the source of truth. `murmur export` writes the day's
-files under `data/published/` in the layout the roadmap fixes for the public
-dataset (CSV now, Parquet from 0.3.0):
+`data/murmur.sqlite` is the source of truth. `murmur export` writes a trading
+day's files under `data/published/`, date first, one Parquet file per table;
+`murmur export --all` rebuilds the whole tree from the store.
 
 ```
-index.json
-universe/2026-11.csv
-articles/2026/11/05.csv
-prices/2026/11/05.csv
-sentiment/2026/11/05.csv
-analysis/daily/2026/11/05.csv              correlations for the day
-analysis/daily/2026/11/05-tickers.csv      per-ticker sentiment and return
-analysis/daily/2026/11/05-sentiment.png
-analysis/daily/2026/11/05-correlation.png
+index.json                              every file: table, date, path, format, rows
+2026/11/universe.parquet                the month's universe (rank, ticker, name, market cap, CIK)
+2026/11/05/articles.parquet             the trading day's articles, with window
+2026/11/05/prices.parquet               OHLCV bars
+2026/11/05/returns.parquet              overnight, intraday, daily per ticker
+2026/11/05/sentiment.parquet            per-headline scores with ticker and window
+2026/11/05/window_sentiment.parquet     per-ticker, per-window mean sentiment and returns
+2026/11/05/correlations.parquet         the day's correlations (window x return)
+2026/11/05/sentiment.png, correlation.png
+2026/10/prices.parquet ...              a finished month, compacted into one file per table
 ```
 
-## Deploy
+Once a month is over its daily files are folded into one file per table in
+the month directory (a later backfill is merged in on the next export); the
+charts stay in the day directories. A file with no rows is never written, and
+articles with no publication time are stored but not exported or analysed.
+`pandas.read_parquet` or DuckDB read the tree directly.
 
-The image is built by CI and pushed to `ghcr.io/gabebecker2048/murmur` on
-every push to `main` (and `vX.Y.Z` tags). `docker-compose.yml` is written for
-the server's conventions: a stack directory with `./data` (store, exports,
-heartbeat, Hugging Face cache) and `./config/murmur.toml` (may be empty),
-uid 1000, read-only root filesystem, no ports.
+## Release and deploy
+
+A release is a tag. After the version bump and `CHANGELOG.md` entry are
+merged, run `./scripts/release.sh X.Y.Z` from an up-to-date `main`: it checks
+everything, pushes `vX.Y.Z`, and the release workflow runs the suite, builds
+the image, pushes it to `ghcr.io/gabebecker2048/murmur` as `X.Y.Z` and
+`latest`, and creates the GitHub release from the changelog entry. Pull
+requests and merges only build and smoke-test the image.
+
+The server pulls `latest` every morning, so a release is what deploys.
+`docker-compose.yml` is written for the server's conventions: a stack
+directory with `./data` (store, exports, heartbeat, Hugging Face cache) and
+`./config/murmur.toml` (may be empty), uid 1000, read-only root filesystem,
+no ports.
 
 ```bash
 mkdir -p ~/murmur/data ~/murmur/config && cd ~/murmur
 touch config/murmur.toml                      # or set overrides
 curl -O https://raw.githubusercontent.com/GabeBecker2048/murmur/main/docker-compose.yml
+docker login ghcr.io -u <github user>            # once; the package is private
 docker compose pull && docker compose up -d
 docker compose logs -f                        # first run downloads FinBERT into ./data/hf-cache
 docker compose exec murmur murmur runs        # the run log

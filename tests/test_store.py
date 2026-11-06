@@ -1,8 +1,5 @@
-from datetime import date
-
 import pytest
 
-from murmur.clock import window_bounds
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember
 from murmur.store import SCHEMA_VERSION, Store
 
@@ -50,18 +47,18 @@ def test_price_upsert_overwrites(store):
     assert store.prices_on("2026-11-05")[0]["close"] == 1.7
 
 
-def test_last_two_closes(store):
+def test_bars_on_and_known_days(store):
     bars = [
-        PriceBar("AAPL", "2026-11-03", None, None, None, 10, None, None),
         PriceBar("AAPL", "2026-11-04", None, None, None, 11, None, None),
         PriceBar("AAPL", "2026-11-05", None, None, None, 12, None, None),
         PriceBar("MSFT", "2026-11-05", None, None, None, 50, None, None),
     ]
     store.upsert_prices(bars, "yfinance")
-    closes = store.last_two_closes("2026-11-05")
-    assert closes["AAPL"] == [("2026-11-05", 12), ("2026-11-04", 11)]
-    assert closes["MSFT"] == [("2026-11-05", 50)]
-    assert store.last_two_closes("2026-11-04")["AAPL"] == [("2026-11-04", 11), ("2026-11-03", 10)]
+    assert set(store.bars_on("2026-11-05")) == {"AAPL", "MSFT"}
+    assert store.bars_on("2026-11-05")["AAPL"]["close"] == 12
+    store.upsert_article(article(), "AAPL", "t")
+    store.set_article_windows([("2026-11-06", "overnight", 1)])
+    assert store.known_days() == ["2026-11-04", "2026-11-05", "2026-11-06"]
 
 
 def test_unscored_and_scores(store):
@@ -71,8 +68,19 @@ def test_unscored_and_scores(store):
     store.insert_scores("m", [(a1, SentimentScores(0.7, 0.1, 0.2, "positive"))], "t")
     assert store.unscored_articles("m") == [(a2, "Other")]
     assert store.unscored_articles("other-model") == [(a1, "Apple beats"), (a2, "Other")]
-    start, end = window_bounds(date(2026, 11, 5), "America/New_York")
-    assert store.ticker_scores_in_window(start, end, "m") == {"AAPL": (1, pytest.approx(0.6))}
+    assert store.articles_without_window() == [
+        (a1, "2026-11-05T14:00:00Z"),
+        (a2, "2026-11-05T14:00:00Z"),
+    ]
+    store.set_article_windows([("2026-11-05", "overnight", a1), ("2026-11-05", "intraday", a2)])
+    assert store.articles_without_window() == []
+    assert store.ticker_scores("2026-11-05", ("overnight",), "m") == {
+        "AAPL": (1, pytest.approx(0.6))
+    }
+    assert store.ticker_scores("2026-11-05", ("overnight", "intraday"), "m") == {
+        "AAPL": (1, pytest.approx(0.6))
+    }  # a2 has no score
+    assert [r["window"] for r in store.articles_on("2026-11-05")] == ["overnight", "intraday"]
 
 
 def test_universe_membership_is_replaced_per_day(store):
@@ -123,6 +131,42 @@ def test_migrates_a_version_1_store(tmp_path):
         assert s.schema_version == SCHEMA_VERSION
         assert s.count("runs") == 0
         assert s.universe_for("d")[0].cik is None
+
+
+def test_migrates_a_version_2_store_keeping_correlations(tmp_path):
+    import sqlite3
+
+    from murmur.store import MIGRATIONS
+
+    path = tmp_path / "v2.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(MIGRATIONS[1] + MIGRATIONS[2] + "PRAGMA user_version = 2;")
+    conn.execute(
+        """INSERT INTO correlations (date, window, scope, source, method, model, n, estimate,
+                                     p_value, ci_low, ci_high, tickers, computed_at)
+           VALUES ('2026-11-05', 'day', 'pooled', 'all', 'pearson', 'm', 98, 0.372, 0.0002,
+                   0.19, 0.53, 'AAPL,MSFT', 't')"""
+    )
+    conn.execute(
+        "INSERT INTO daily_sentiment (date, ticker, model, n_articles, mean_score) "
+        "VALUES ('2026-11-05', 'AAPL', 'm', 3, 0.1)"
+    )
+    conn.commit()
+    conn.close()
+    with Store(path) as s:
+        assert s.schema_version == SCHEMA_VERSION
+        rows = s.correlations_on("2026-11-05")
+        assert len(rows) == 1
+        r = rows[0]
+        assert (r["window"], r["return_type"], r["lag"], r["estimate"]) == (
+            "day",
+            "daily",
+            0,
+            0.372,
+        )
+        assert s.count("window_sentiment") == 0 and s.count("returns") == 0
+        with pytest.raises(ValueError):
+            s.count("daily_sentiment")
 
 
 def test_cascade_delete_removes_links(store):

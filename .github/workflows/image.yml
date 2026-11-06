@@ -1,14 +1,14 @@
+# Builds and smoke-tests the image on every pull request and push to main.
+# Publishing to ghcr.io happens only on a release (release.yml).
 name: Image
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   image:
@@ -29,29 +29,3 @@ jobs:
           docker run --rm murmur:ci murmur --version
           docker run --rm murmur:ci python -c "import murmur.cli, murmur.scheduler; print('imports ok')"
           docker run --rm murmur:ci sh -c 'murmur health; test $? -eq 1'   # no heartbeat yet -> 1
-      - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tags
-        if: github.event_name != 'pull_request'
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=sha
-      - name: Push
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
