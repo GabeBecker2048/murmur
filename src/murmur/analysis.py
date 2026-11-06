@@ -173,6 +173,8 @@ def _fisher_ci(res, n: int) -> tuple[float | None, float | None]:
 def correlate(window: str, return_type: str, pairs: list[Pair]) -> list[Correlation]:
     if len(pairs) < MIN_PAIRS:
         return []
+    import warnings
+
     from scipy import stats
 
     x = [p.sentiment for p in pairs]
@@ -180,7 +182,11 @@ def correlate(window: str, return_type: str, pairs: list[Pair]) -> list[Correlat
     tickers = tuple(p.ticker for p in pairs)
     n = len(pairs)
     out: list[Correlation] = []
-    pearson = stats.pearsonr(x, y)
+    with warnings.catch_warnings():
+        # a constant input (every ticker flat) yields NaN, which is reported below
+        warnings.simplefilter("ignore", stats.ConstantInputWarning)
+        pearson = stats.pearsonr(x, y)
+        spearman = stats.spearmanr(x, y)
     if math.isfinite(pearson.statistic):
         lo, hi = _fisher_ci(pearson, n)
         out.append(
@@ -198,7 +204,6 @@ def correlate(window: str, return_type: str, pairs: list[Pair]) -> list[Correlat
         )
     else:
         log.warning("%s/%s pearson undefined (constant input) for %d pairs", window, return_type, n)
-    spearman = stats.spearmanr(x, y)
     if math.isfinite(spearman.statistic):
         out.append(
             Correlation(
