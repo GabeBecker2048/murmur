@@ -22,6 +22,10 @@ Running daily. From this version the store is meant to grow every day.
   retries on failure, catch-up after a restart, heartbeat file, clean stop on
   SIGTERM. `murmur health` checks the heartbeat; `murmur runs` lists the run
   log (new `runs` table).
+- Backfill: the analyze stage also completes any trading day in the last week
+  that has no correlation yet but whose price bars have since arrived, and
+  exports it. Yahoo's daily bar for a day can disappear for a while in the
+  evening, which made that day's own run fail analyze.
 - `sentiment.device`: `cpu` (default), `cuda` or `auto`.
 - `Dockerfile`, `docker-compose.yml` and a CI workflow that builds the image
   and pushes it to ghcr.io; `deploy/murmur-backup.sh` for the server.

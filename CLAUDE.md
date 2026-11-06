@@ -90,6 +90,13 @@ are gitignored.
 - `torch` resolves from the PyTorch CPU index on Linux only (`[tool.uv.sources]`); after
   changing dependencies check `uv.lock` has no `nvidia-*` packages.
 - A `[universe.static]` table in a user config replaces the packaged 50 tickers.
+- Yahoo's daily bar for the current day can vanish from chart data in the evening while
+  they rebuild end-of-day figures (2026-11-05: present at 18:07 and 19:53 ET, gone at 20:20,
+  back with a NaN close at 20:22). The parser drops NaN closes; analyze fails for the day;
+  the next run's `backfill_days` (pipeline.py) completes it. Do not "fix" this by relaxing
+  the trading-day check.
+- Running `murmur run --date <past day>` cannot recover that day's news: Yahoo's per-ticker
+  feed is only the latest ~20 headlines. Past-day runs are for prices/analysis only.
 - The packaged default `[sec] contact` is Gabe's email; the SEC blocks requests without one.
 - Chubb (CB) is Swiss-domiciled and so excluded by the US-only rule even though it is in the
   S&P 500. That is the rule working as decided, not a bug.

@@ -54,7 +54,9 @@ weekends. A failed run is retried (3 more times, 20 minutes apart, by
 default). If the process starts after the slot and the day has no successful
 run yet, it runs immediately, so a restart never loses a day. It writes a
 heartbeat file every minute that `murmur health` checks, and stops cleanly on
-SIGTERM.
+SIGTERM. Each run also completes any trading day from the past week whose
+analysis is still missing but whose price bars have since arrived (Yahoo's
+bar for a day sometimes disappears for a while in the evening).
 
 In 0.1.0 the day's sentiment for a ticker is the mean of `positive − negative`
 over its headlines published that calendar day, and the return is
