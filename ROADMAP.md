@@ -120,6 +120,8 @@ are replaced before any public release.
   and a log of each run.
 - Dockerfile and compose file; deployed to the server. **From here the store
   grows every day.**
+- A `sentiment.device` setting (`cpu`, `cuda`, `auto`) so FinBERT can use a
+  GPU where there is one. Default stays `cpu`.
 
 ## 0.3.0 - timing and returns
 
