@@ -105,8 +105,10 @@ def run_universe(
 
 def _ingest(store: Store, sources: list[NewsSource], tickers: list[str], fetch: Callable) -> str:
     """Run ``fetch(source, ticker)`` for every source and ticker, storing what
-    comes back. A ticker failing on one source is tolerated; a source failing
-    on every ticker fails the stage."""
+    comes back. A ticker failing on one source is tolerated, and so is a source
+    failing on every ticker as long as another source delivered (it is logged
+    as an error and named in the summary); the stage fails only when every
+    source failed."""
     seen_at = utc_now_iso()
     parts = []
     dead = []
@@ -125,12 +127,15 @@ def _ingest(store: Store, sources: list[NewsSource], tickers: list[str], fetch: 
                 linked += 1
         if tickers and failed == len(tickers):
             dead.append(source.name)
+            log.error("news: %s failed for every ticker", source.name)
         parts.append(
             f"{source.name}: {linked} articles, {new} new"
             + (f", {failed} tickers failed" if failed else "")
         )
+    if dead and len(dead) == len(sources):
+        raise RuntimeError(f"news: every source failed ({'; '.join(parts)})")
     if dead:
-        raise RuntimeError(f"news: {', '.join(dead)} failed for every ticker ({'; '.join(parts)})")
+        parts.append(f"DEAD: {', '.join(dead)}")
     return "; ".join(parts)
 
 
