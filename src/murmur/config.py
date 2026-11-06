@@ -8,6 +8,7 @@ overrides ``data_dir`` from any file.
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +18,9 @@ from pathlib import Path
 ENV_CONFIG = "MURMUR_CONFIG"
 ENV_DATA_DIR = "MURMUR_DATA_DIR"
 DEFAULT_USER_CONFIG = Path("murmur.toml")
+
+UNIVERSE_SOURCES = ("static", "marketcap")
+DEVICES = ("cpu", "cuda", "auto")
 
 
 class ConfigError(ValueError):
@@ -32,12 +36,32 @@ class NewsConfig:
 class SentimentConfig:
     model: str
     batch_size: int
+    device: str
+
+
+@dataclass(frozen=True)
+class SecConfig:
+    contact: str
 
 
 @dataclass(frozen=True)
 class UniverseConfig:
     source: str
+    size: int
+    min_market_cap: float
     static: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ScheduleConfig:
+    time: str
+    retries: int
+    retry_delay_minutes: int
+
+    @property
+    def hour_minute(self) -> tuple[int, int]:
+        hour, minute = self.time.split(":")
+        return int(hour), int(minute)
 
 
 @dataclass(frozen=True)
@@ -46,7 +70,9 @@ class Config:
     timezone: str
     news: NewsConfig
     sentiment: SentimentConfig
+    sec: SecConfig
     universe: UniverseConfig
+    schedule: ScheduleConfig
     source_path: Path | None
     """The user file that was merged over the defaults, if any."""
 
@@ -57,6 +83,10 @@ class Config:
     @property
     def published_dir(self) -> Path:
         return self.data_dir / "published"
+
+    @property
+    def heartbeat_path(self) -> Path:
+        return self.data_dir / "heartbeat"
 
 
 def packaged_defaults() -> dict:
@@ -110,11 +140,19 @@ def load_config(path: str | Path | None = None, env: Mapping[str, str] | None = 
 def _build(raw: dict, user_path: Path | None) -> Config:
     try:
         universe = raw["universe"]
-        static = {str(k): str(v) for k, v in universe.get("static", {}).items()}
+        static = {str(k).upper(): str(v) for k, v in universe.get("static", {}).items()}
+        if universe["source"] not in UNIVERSE_SOURCES:
+            raise ConfigError(
+                f"universe.source must be one of {UNIVERSE_SOURCES}, not {universe['source']!r}"
+            )
         if universe["source"] == "static" and not static:
             raise ConfigError("universe.source is 'static' but universe.static is empty")
-        if universe["source"] != "static":
-            raise ConfigError(f"unsupported universe.source {universe['source']!r} (0.1.0: static)")
+        device = str(raw["sentiment"].get("device", "cpu"))
+        if device not in DEVICES:
+            raise ConfigError(f"sentiment.device must be one of {DEVICES}, not {device!r}")
+        schedule_time = str(raw["schedule"]["time"])
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", schedule_time):
+            raise ConfigError(f"schedule.time must be HH:MM, not {schedule_time!r}")
         return Config(
             data_dir=Path(raw["data_dir"]),
             timezone=str(raw["timezone"]),
@@ -122,8 +160,20 @@ def _build(raw: dict, user_path: Path | None) -> Config:
             sentiment=SentimentConfig(
                 model=str(raw["sentiment"]["model"]),
                 batch_size=int(raw["sentiment"]["batch_size"]),
+                device=device,
             ),
-            universe=UniverseConfig(source=str(universe["source"]), static=static),
+            sec=SecConfig(contact=str(raw.get("sec", {}).get("contact", ""))),
+            universe=UniverseConfig(
+                source=str(universe["source"]),
+                size=int(universe.get("size", 100)),
+                min_market_cap=float(universe.get("min_market_cap", 10_000_000_000)),
+                static=static,
+            ),
+            schedule=ScheduleConfig(
+                time=schedule_time,
+                retries=int(raw["schedule"]["retries"]),
+                retry_delay_minutes=int(raw["schedule"]["retry_delay_minutes"]),
+            ),
             source_path=user_path,
         )
     except KeyError as e:

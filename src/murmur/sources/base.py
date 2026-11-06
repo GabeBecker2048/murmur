@@ -26,5 +26,6 @@ class PriceSource(Protocol):
 
 
 def yahoo_symbol(ticker: str) -> str:
-    """SEC-style ``BRK.B`` -> Yahoo ``BRK-B``."""
-    return ticker.replace(".", "-")
+    """Canonical tickers already use the SEC/Yahoo dash form (``BRK-B``); a dotted
+    ticker from an older config is mapped for safety."""
+    return ticker.upper().replace(".", "-")

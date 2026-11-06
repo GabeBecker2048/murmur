@@ -46,5 +46,6 @@ def test_click_through_fallback_and_skips():
 
 
 def test_symbol_mapping():
-    assert yahoo_symbol("BRK.B") == "BRK-B"
+    assert yahoo_symbol("BRK-B") == "BRK-B"
+    assert yahoo_symbol("brk.b") == "BRK-B"  # old dotted form still maps
     assert yahoo_symbol("AAPL") == "AAPL"

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -92,7 +92,42 @@ MIGRATIONS: dict[int, str] = {
         PRIMARY KEY (date, window, scope, source, method, model)
     );
     """,
+    2: """
+    ALTER TABLE universe_membership ADD COLUMN cik INTEGER;
+    CREATE TABLE companies (
+        cik                INTEGER PRIMARY KEY,
+        ticker             TEXT NOT NULL,
+        name               TEXT NOT NULL,
+        country            TEXT,
+        country_checked_at TEXT
+    );
+    CREATE TABLE universe_months (
+        month       TEXT NOT NULL,
+        rank        INTEGER NOT NULL,
+        ticker      TEXT NOT NULL,
+        cik         INTEGER,
+        name        TEXT NOT NULL,
+        market_cap  REAL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (month, ticker)
+    );
+    CREATE TABLE runs (
+        id          INTEGER PRIMARY KEY,
+        date        TEXT NOT NULL,
+        trigger     TEXT NOT NULL,
+        attempt     INTEGER NOT NULL,
+        started_at  TEXT NOT NULL,
+        finished_at TEXT,
+        ok          INTEGER,
+        stages      TEXT
+    );
+    CREATE INDEX idx_runs_date ON runs (date);
+    """,
 }
+
+
+def _member(r: sqlite3.Row) -> UniverseMember:
+    return UniverseMember(r["ticker"], r["name"], r["market_cap"], r["rank"], r["cik"])
 
 
 class Store:
@@ -127,32 +162,112 @@ class Store:
                 f"store schema {current} is newer than this murmur ({SCHEMA_VERSION})"
             )
         for version in range(current + 1, SCHEMA_VERSION + 1):
-            with self.conn:
-                self.conn.execute("BEGIN")
-                self.conn.executescript(MIGRATIONS[version])
-                self.conn.execute(f"PRAGMA user_version = {version}")
+            # One script per version, applied atomically.
+            self.conn.executescript(
+                f"BEGIN;\n{MIGRATIONS[version]}\nPRAGMA user_version = {version};\nCOMMIT;"
+            )
 
     # -- universe -------------------------------------------------------------
 
     def record_universe(self, date: str, members: Iterable[UniverseMember], source: str) -> None:
         with self.conn:
             self.conn.execute("BEGIN")
+            self.conn.execute("DELETE FROM universe_membership WHERE date = ?", (date,))
             self.conn.executemany(
-                """INSERT INTO universe_membership (date, ticker, name, market_cap, rank, source)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT (date, ticker) DO UPDATE SET
-                     name = excluded.name, market_cap = excluded.market_cap,
-                     rank = excluded.rank, source = excluded.source""",
-                [(date, m.ticker, m.name, m.market_cap, m.rank, source) for m in members],
+                """INSERT INTO universe_membership (date, ticker, name, market_cap, rank, source,
+                                                    cik)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [(date, m.ticker, m.name, m.market_cap, m.rank, source, m.cik) for m in members],
             )
 
     def universe_for(self, date: str) -> list[UniverseMember]:
         rows = self.conn.execute(
-            """SELECT ticker, name, market_cap, rank FROM universe_membership
+            """SELECT ticker, name, market_cap, rank, cik FROM universe_membership
                WHERE date = ? ORDER BY rank, ticker""",
             (date,),
         )
-        return [UniverseMember(r["ticker"], r["name"], r["market_cap"], r["rank"]) for r in rows]
+        return [_member(r) for r in rows]
+
+    def universe_month(self, month: str) -> list[UniverseMember]:
+        rows = self.conn.execute(
+            """SELECT ticker, name, market_cap, rank, cik FROM universe_months
+               WHERE month = ? ORDER BY rank, ticker""",
+            (month,),
+        )
+        return [_member(r) for r in rows]
+
+    def save_universe_month(
+        self, month: str, members: Iterable[UniverseMember], computed_at: str
+    ) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,))
+            self.conn.executemany(
+                """INSERT INTO universe_months (month, rank, ticker, cik, name, market_cap,
+                                                computed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (month, m.rank, m.ticker, m.cik, m.name, m.market_cap, computed_at)
+                    for m in members
+                ],
+            )
+
+    def universe_months(self) -> list[str]:
+        rows = self.conn.execute("SELECT DISTINCT month FROM universe_months ORDER BY month")
+        return [r["month"] for r in rows]
+
+    # -- companies (CIK -> country cache) -------------------------------------
+
+    def company_countries(self) -> dict[int, tuple[str | None, str | None]]:
+        rows = self.conn.execute("SELECT cik, country, country_checked_at FROM companies")
+        return {r["cik"]: (r["country"], r["country_checked_at"]) for r in rows}
+
+    def upsert_company(
+        self, cik: int, ticker: str, name: str, country: str | None, checked_at: str
+    ) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute(
+                """INSERT INTO companies (cik, ticker, name, country, country_checked_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (cik) DO UPDATE SET
+                     ticker = excluded.ticker, name = excluded.name,
+                     country = excluded.country,
+                     country_checked_at = excluded.country_checked_at""",
+                (cik, ticker, name, country, checked_at),
+            )
+
+    # -- runs -----------------------------------------------------------------
+
+    def start_run(self, date: str, trigger: str, attempt: int, started_at: str) -> int:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            cur = self.conn.execute(
+                "INSERT INTO runs (date, trigger, attempt, started_at) VALUES (?, ?, ?, ?)",
+                (date, trigger, attempt, started_at),
+            )
+            return cur.lastrowid
+
+    def finish_run(self, run_id: int, finished_at: str, ok: bool, stages_json: str) -> None:
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute(
+                "UPDATE runs SET finished_at = ?, ok = ?, stages = ? WHERE id = ?",
+                (finished_at, int(ok), stages_json, run_id),
+            )
+
+    def successful_run_exists(self, date: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM runs WHERE date = ? AND ok = 1 LIMIT 1", (date,)
+        ).fetchone()
+        return row is not None
+
+    def recent_runs(self, limit: int = 20) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT id, date, trigger, attempt, started_at, finished_at, ok, stages
+               FROM runs ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
 
     # -- articles -------------------------------------------------------------
 
@@ -217,12 +332,15 @@ class Store:
     def count(self, table: str) -> int:
         if table not in {
             "universe_membership",
+            "universe_months",
+            "companies",
             "articles",
             "article_tickers",
             "prices",
             "sentiment",
             "daily_sentiment",
             "correlations",
+            "runs",
         }:
             raise ValueError(table)
         return self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]

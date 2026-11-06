@@ -44,6 +44,7 @@ class UniverseMember:
     name: str
     market_cap: float | None = None
     rank: int | None = None
+    cik: int | None = None
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,17 @@ class FakeScorer:
             else:
                 out.append(SentimentScores(0.2, 0.2, 0.6, "neutral"))
         return out
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests never touch the network; any attempt fails loudly instead of slowly."""
+
+    def refuse(self, *args, **kwargs):
+        raise RuntimeError("network access attempted in a test")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
 
 
 @pytest.fixture
