@@ -75,11 +75,54 @@ def test_unscored_and_scores(store):
     assert store.ticker_scores_in_window(start, end, "m") == {"AAPL": (1, pytest.approx(0.6))}
 
 
-def test_universe_membership(store):
+def test_universe_membership_is_replaced_per_day(store):
     store.record_universe("2026-11-05", [UniverseMember("MSFT", "Microsoft")], "static")
-    store.record_universe("2026-11-05", [UniverseMember("AAPL", "Apple")], "static")
-    assert [m.ticker for m in store.universe_for("2026-11-05")] == ["AAPL", "MSFT"]
+    store.record_universe(
+        "2026-11-05", [UniverseMember("AAPL", "Apple", 1.0, 1, 320193)], "marketcap"
+    )
+    assert [m.ticker for m in store.universe_for("2026-11-05")] == ["AAPL"]
+    assert store.universe_for("2026-11-05")[0].cik == 320193
     assert store.universe_for("2026-11-04") == []
+
+
+def test_universe_months_and_companies(store):
+    members = [UniverseMember("AAPL", "Apple", 2.0, 1, 1), UniverseMember("MSFT", "MS", 1.0, 2, 2)]
+    store.save_universe_month("2026-11", members, "t")
+    store.save_universe_month("2026-11", members[:1], "t2")  # replaced, not appended
+    assert [m.ticker for m in store.universe_month("2026-11")] == ["AAPL"]
+    assert store.universe_month("2026-10") == []
+    store.upsert_company(1, "AAPL", "Apple", "United States", "t")
+    store.upsert_company(1, "AAPL", "Apple Inc.", "United States", "t2")
+    assert store.company_countries() == {1: ("United States", "t2")}
+
+
+def test_runs(store):
+    rid = store.start_run("2026-11-05", "manual", 1, "t0")
+    assert not store.successful_run_exists("2026-11-05")
+    store.finish_run(rid, "t1", True, "[]")
+    assert store.successful_run_exists("2026-11-05")
+    r = store.recent_runs()[0]
+    assert (r["id"], r["ok"], r["finished_at"]) == (rid, 1, "t1")
+
+
+def test_migrates_a_version_1_store(tmp_path):
+    import sqlite3
+
+    from murmur.store import MIGRATIONS
+
+    path = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(MIGRATIONS[1] + "PRAGMA user_version = 1;")
+    conn.execute(
+        "INSERT INTO universe_membership (date, ticker, name, source) "
+        "VALUES ('d', 'AAPL', 'A', 's')"
+    )
+    conn.commit()
+    conn.close()
+    with Store(path) as s:
+        assert s.schema_version == SCHEMA_VERSION
+        assert s.count("runs") == 0
+        assert s.universe_for("d")[0].cik is None
 
 
 def test_cascade_delete_removes_links(store):

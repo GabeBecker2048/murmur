@@ -23,12 +23,12 @@ def frame(symbols, dates, tz_aware=False):
 
 def test_multi_ticker_frame_maps_symbols_back():
     df = frame(["AAPL", "BRK-B"], ["2026-11-03", "2026-11-04"])
-    bars = parse_download(df, {"AAPL": "AAPL", "BRK-B": "BRK.B"}, TZ)
+    bars = parse_download(df, {"AAPL": "AAPL", "BRK-B": "BRK-B"}, TZ)
     assert [(b.ticker, b.date) for b in bars] == [
         ("AAPL", "2026-11-03"),
         ("AAPL", "2026-11-04"),
-        ("BRK.B", "2026-11-03"),
-        ("BRK.B", "2026-11-04"),
+        ("BRK-B", "2026-11-03"),
+        ("BRK-B", "2026-11-04"),
     ]
     b = bars[2]
     assert (b.open, b.high, b.low, b.close, b.adj_close, b.volume) == (200, 201, 202, 203, 204, 205)

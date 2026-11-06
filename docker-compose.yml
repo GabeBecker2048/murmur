@@ -1,0 +1,49 @@
+# Murmur on gabe-server. Lives at /home/gabe/murmur/ with:
+#   ./data/            the store, exports, heartbeat and the Hugging Face cache (bind mount)
+#   ./config/murmur.toml   overrides over the packaged defaults (may be empty)
+# The image is pulled from ghcr.io (built by .github/workflows/image.yml), so
+# docker-autopatch keeps it updated; `docker compose build` works too.
+name: murmur
+
+services:
+  murmur:
+    image: ghcr.io/gabebecker2048/murmur:latest
+    build: .
+    container_name: murmur
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      # The schedule fires at config `timezone` (America/New_York) regardless of
+      # TZ; TZ only affects log timestamps.
+      TZ: America/New_York
+      MURMUR_DATA_DIR: /data
+      MURMUR_CONFIG: /config/murmur.toml
+      HF_HOME: /data/hf-cache
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Measured on the 2026-11-05 run with 100 tickers (see README "Deploy"):
+    # FinBERT on CPU peaks around 1.0 GB RSS (994 MB). 6 shared cores on the server.
+    mem_limit: 2g
+    cpus: 3.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

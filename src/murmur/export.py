@@ -19,6 +19,7 @@ from murmur import __version__
 from murmur.clock import utc_now_iso, window_bounds
 from murmur.config import Config
 from murmur.store import Store
+from murmur.universe import applicable_month
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def export_day(store: Store, config: Config, day: date) -> list[Path]:
 
     members = store.universe_for(iso)
     if members:
-        p = base / "universe" / f"{day:%Y-%m}.csv"
+        p = base / "universe" / f"{applicable_month(day)}.csv"
         _write_csv(
             p,
             ["ticker", "name", "market_cap", "rank"],

@@ -10,23 +10,37 @@ max_articles = 20               # per ticker per fetch
 [sentiment]
 model = "ProsusAI/finbert"
 batch_size = 32
+device = "cpu"                  # "cpu", "cuda" or "auto" (cuda if available)
+
+[sec]
+# The SEC's fair-access policy requires a contact email in the User-Agent of
+# every request. Used once a month to fetch the public ticker/CIK list.
+contact = "gabebecker2048@gmail.com"
 
 [universe]
-# "static": the fixed list below. 0.2.0 adds "marketcap" (SEC ticker list ranked
-# by market cap, rebalanced monthly). Membership is recorded in the store per
-# day either way, so analysis never reads this list directly.
-source = "static"
+# "marketcap": the `size` largest US-domiciled companies on NYSE/Nasdaq by
+# market cap (SEC ticker list + Yahoo screener), rebalanced on the first trading
+# day of each month. "static": the fixed list below. Membership is recorded in
+# the store per day either way, so analysis never reads this file directly.
+source = "marketcap"
+size = 100
+min_market_cap = 10_000_000_000  # screener floor; keep well below the 100th company's cap
+
+[schedule]
+time = "18:00"                  # local time in `timezone`, every day incl. weekends
+retries = 3                     # extra attempts when a stage fails
+retry_delay_minutes = 20
 
 [universe.static]
-# Temporary seed: the 50 tickers from the original settings.json.
-# Tickers are SEC-style (BRK.B); price/news sources map them to their own symbols.
+# The 50 tickers from the original settings.json, used when source = "static".
+# Tickers use the SEC/Yahoo form with a dash for share classes (BRK-B).
 AAPL = "Apple"
 MSFT = "Microsoft"
 GOOGL = "Alphabet (Google)"
 AMZN = "Amazon"
 NVDA = "NVIDIA"
 META = "Meta Platforms"
-"BRK.B" = "Berkshire Hathaway"
+"BRK-B" = "Berkshire Hathaway"
 TSLA = "Tesla"
 LLY = "Eli Lilly"
 V = "Visa"

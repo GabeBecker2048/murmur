@@ -1,6 +1,6 @@
 [project]
 name = "murmur"
-version = "0.1.0"
+version = "0.2.0"
 description = "Daily news-sentiment vs stock-return pipeline for the largest US companies."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.4",
     "transformers>=4.45",
     "matplotlib>=3.8",
+    "exchange-calendars>=4.5",
 ]
 
 [project.scripts]
@@ -48,3 +49,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # exchange_calendars on pandas 3: not ours to fix
+    "ignore:Series.values returning an ndarray:DeprecationWarning",
+]

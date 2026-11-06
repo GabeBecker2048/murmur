@@ -28,10 +28,26 @@ class SentimentScorer(Protocol):
     def score(self, titles: list[str]) -> list[SentimentScores]: ...
 
 
+def resolve_device(requested: str, cuda_available: bool) -> str:
+    """``cpu``/``cuda``/``auto`` -> the torch device string to use."""
+    if requested == "auto":
+        return "cuda" if cuda_available else "cpu"
+    if requested == "cuda" and not cuda_available:
+        raise RuntimeError(
+            "sentiment.device is 'cuda' but torch reports no CUDA device "
+            "(on Linux the lock file pins the CPU-only torch build)"
+        )
+    if requested not in ("cpu", "cuda"):
+        raise ValueError(f"unknown device {requested!r}")
+    return requested
+
+
 class FinBertScorer:
     """``ProsusAI/finbert`` (or any 3-class positive/negative/neutral model)."""
 
-    def __init__(self, model_name: str = "ProsusAI/finbert", batch_size: int = 32):
+    def __init__(
+        self, model_name: str = "ProsusAI/finbert", batch_size: int = 32, device: str = "cpu"
+    ):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         from transformers.utils import logging as hf_logging
@@ -40,9 +56,12 @@ class FinBertScorer:
         self.model_name = model_name
         self.batch_size = batch_size
         self._torch = torch
+        self.device = resolve_device(device, torch.cuda.is_available())
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        self.model.to(self.device)
         self.model.eval()
+        log.info("sentiment: %s on %s", model_name, self.device)
         id2label = {int(i): str(name).lower() for i, name in self.model.config.id2label.items()}
         if set(id2label.values()) != LABELS:
             raise ValueError(f"{model_name} labels {id2label} are not {sorted(LABELS)}")
@@ -55,10 +74,10 @@ class FinBertScorer:
             batch = titles[start : start + self.batch_size]
             encoded = self.tokenizer(
                 batch, padding=True, truncation=True, max_length=128, return_tensors="pt"
-            )
+            ).to(self.device)
             with torch.inference_mode():
                 logits = self.model(**encoded).logits
-            probs = torch.softmax(logits, dim=-1).tolist()
+            probs = torch.softmax(logits, dim=-1).cpu().tolist()
             for row in probs:
                 by_label = dict(zip(self.labels, row, strict=True))
                 out.append(

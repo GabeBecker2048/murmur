@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date
 
-from murmur.clock import utc_now_iso, window_bounds
+from murmur.clock import is_trading_day, utc_now_iso, window_bounds
 from murmur.config import Config
 from murmur.store import Store
 
@@ -144,12 +144,17 @@ def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> 
         if t in universe
     }
     store.upsert_daily_sentiment(iso, model, sentiment)
-    result = DayResult(day=day, model=model, trading_day=bool(store.prices_on(iso)))
+    result = DayResult(day=day, model=model, trading_day=is_trading_day(day))
     result.sentiment = sentiment
     if not result.trading_day:
-        result.note = f"{iso} is not a trading day (no price bars); correlation skipped"
+        result.note = f"{iso} is not a trading day; correlation skipped"
         log.info(result.note)
         return result
+    if not store.prices_on(iso):
+        raise RuntimeError(
+            f"no price bars for trading day {iso} "
+            "(market not closed yet, or the prices stage failed)"
+        )
 
     result.returns = {t: v for t, v in daily_returns(store, day).items() if t in universe}
     result.pairs = [

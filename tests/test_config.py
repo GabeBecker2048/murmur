@@ -13,9 +13,13 @@ def test_packaged_defaults_load_without_user_file(tmp_path, monkeypatch):
     assert cfg.timezone == "America/New_York"
     assert cfg.news.max_articles == 20
     assert cfg.sentiment.model == "ProsusAI/finbert"
-    assert cfg.universe.source == "static"
+    assert cfg.universe.source == "marketcap"
+    assert cfg.universe.size == 100
+    assert cfg.sec.contact.endswith("@gmail.com")
+    assert cfg.schedule.hour_minute == (18, 0)
+    assert cfg.sentiment.device == "cpu"
     assert len(cfg.universe.static) == 50
-    assert cfg.universe.static["BRK.B"] == "Berkshire Hathaway"
+    assert cfg.universe.static["BRK-B"] == "Berkshire Hathaway"
     assert cfg.store_path == Path("data/murmur.sqlite")
     assert cfg.published_dir == Path("data/published")
 
@@ -52,15 +56,24 @@ def test_missing_explicit_file_is_an_error(tmp_path):
 
 def test_static_universe_can_be_replaced(tmp_path):
     user = tmp_path / "u.toml"
-    user.write_text('[universe.static]\nAAPL = "Apple"\n"BRK.B" = "Berkshire"\n')
+    user.write_text('[universe.static]\nAAPL = "Apple"\n"brk-b" = "Berkshire"\n')
     cfg = load_config(user, env={})
     # the static list is replaced wholesale, not merged with the packaged 50
-    assert cfg.universe.static == {"AAPL": "Apple", "BRK.B": "Berkshire"}
+    assert cfg.universe.static == {"AAPL": "Apple", "BRK-B": "Berkshire"}
     assert cfg.news.max_articles == 20  # other tables still merge
 
 
-def test_unsupported_universe_source(tmp_path):
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[universe]\nsource = "sp500"\n',
+        '[sentiment]\ndevice = "tpu"\n',
+        '[schedule]\ntime = "6pm"\n',
+        '[universe]\nsource = "static"\n[universe.static]\n',
+    ],
+)
+def test_invalid_values(tmp_path, text):
     user = tmp_path / "u.toml"
-    user.write_text('[universe]\nsource = "marketcap"\n')
+    user.write_text(text)
     with pytest.raises(ConfigError):
         load_config(user, env={})
