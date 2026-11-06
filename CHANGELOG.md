@@ -4,6 +4,38 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.6.0] - 2026-11-06
+
+The API. One process for everything, and a control plane for the web UI.
+
+### Added
+
+- `murmur serve`: FastAPI on port 8100 with `/api/v1` (health, status,
+  latest, runs, jobs, settings, universe, days, tickers, correlations,
+  lead/lag, sources, logs, one on-demand chart), `/data` serving the
+  published tree, and `/docs`.
+- Jobs: every long or mutating operation is a queued job executed one at a
+  time by a worker thread, with JSON progress, a tailable log, cooperative
+  cancellation, retries with `not_before`, and interruption marking on
+  restart. The daily scheduler is a tick inside the worker, so scheduled runs
+  and manual backfills never overlap. Destructive jobs need `confirm: true`.
+- Settings editable through `PUT /api/v1/settings`, stored in
+  `<data_dir>/settings.toml` above the ops file; `GET /settings/schema`
+  describes every key for a form; provenance per key.
+- Bearer-token auth (`MURMUR_API_TOKEN`) on writes; reads open. CORS via
+  `MURMUR_CORS_ORIGINS`.
+- `export.rebuild_month` regenerates a month from the store so deletions
+  reach the published tree; `index.json` entries carry `bytes` and
+  `modified`.
+- Schema v6 (`jobs`). The Docker image runs `murmur serve` with an HTTP
+  health check; compose publishes 8100 and sets a 60 s stop grace period.
+
+### Changed
+
+- `murmur health` checks the running server over HTTP (`--file` for the
+  heartbeat). `murmur schedule` remains as the no-HTTP fallback.
+- Charts are rendered through `matplotlib.figure.Figure`, never pyplot.
+
 ## [0.5.1] - 2026-11-06
 
 What the first live run of the new sources taught.

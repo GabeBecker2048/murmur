@@ -7,18 +7,17 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.5.0, pre-public.** The pipeline runs daily on the server with a
-market-cap universe of the 100 largest US companies. Headlines come from
-Yahoo, Finnhub and GDELT, prices from yfinance or Polygon, all behind the same
-interfaces; an article seen through several sources is stored once, and every
-correlation is computed per source as well as pooled. Headlines are bucketed
-into overnight and intraday windows on the NYSE calendar, three returns are
-computed from open and close, and every window is correlated with every
-return at lags −1, 0 and +1, daily and over rolling 1 to 12-month horizons.
-History can be backfilled through the sources that support date ranges. The
-API and the web UI arrive in later versions. The repository stays private
-until the original contributors agree to publish it, and the code is never
-published to PyPI.
+**Status: 0.6.0, pre-public.** One process serves an HTTP API, runs the daily
+job and executes queued work: `/api/v1` answers queries about days, tickers,
+sources and the lead/lag results, runs and cancels jobs (runs, backfills,
+rebuilds, deletions), and edits settings; `/data` serves the published Parquet
+tree; `/docs` is the OpenAPI UI. The pipeline underneath is unchanged: a
+market-cap universe of the 100 largest US companies, headlines from Yahoo,
+Finnhub and GDELT, prices from yfinance or Polygon, overnight/intraday windows
+on the NYSE calendar, three returns, and correlations at lags −1, 0 and +1
+daily and over rolling horizons, per source and pooled. The web UI is 0.7.0.
+The repository stays private until the original contributors agree to publish
+it, and the code is never published to PyPI.
 
 ## How it works
 
@@ -86,16 +85,26 @@ Yahoo has no date-range query, so `news --from` needs `finnhub` or `gdelt`
 in `news.sources`. Scoring a backlog runs FinBERT once per headline; the
 server does about eight a second.
 
-### The daily job
+### The daily job and the job queue
 
-`murmur schedule` runs the pipeline at 18:00 Eastern every day including
-weekends. A failed run is retried (3 more times, 20 minutes apart, by
-default). If the process starts after the slot and the day has no successful
-run yet, it runs immediately, so a restart never loses a day. It writes a
-heartbeat file every minute that `murmur health` checks, and stops cleanly on
-SIGTERM. Each run also completes any trading day from the past week whose
-analysis is still missing but whose price bars have since arrived (Yahoo's
-bar for a day sometimes disappears for a while in the evening).
+`murmur serve` is the process: it serves the API and runs one worker thread
+that executes **jobs** one at a time. The daily run is a job the worker queues
+itself at 18:00 Eastern (every day, weekends included); a failed run is
+re-queued after 20 minutes, up to 3 times. If the process starts after the
+slot and the day has no successful run yet, the run is queued immediately, so
+a restart never loses a day. Each run also completes any trading day from the
+past week whose analysis is still missing but whose price bars have since
+arrived (Yahoo's bar for a day sometimes disappears for a while in the
+evening), and re-analyses the previous session.
+
+Everything else that takes time or changes data is a job too, so a manual
+backfill can never collide with the daily run: `run`, `universe`, `news` and
+`prices` (one day or a date range), `sentiment`, `analyze` (one day or all),
+`export` (one day, all, or rebuild a month), `backup`, and the destructive
+`delete_analysis`, `delete_scores` and `delete_universe_month`, which need
+`confirm: true`. A job reports progress, keeps a log you can tail, and can be
+cancelled. `murmur schedule` still exists as a scheduler-only fallback with
+no HTTP.
 
 ### Windows and returns
 
@@ -150,6 +159,39 @@ uv run murmur --version
 The first sentiment run downloads FinBERT (about 440 MB) into the Hugging
 Face cache (`HF_HOME` to relocate it).
 
+## The API
+
+```
+GET  /api/v1/health, /status, /latest, /logs
+GET  /api/v1/runs[/{id}]                 the daily run log
+GET  /api/v1/jobs[/{id}[/log?after=]]    the job queue; POST /api/v1/jobs {type, params, confirm}
+DELETE /api/v1/jobs/{id}                 cancel; POST /api/v1/scheduler/run-now
+GET  /api/v1/settings[/schema]           effective config with provenance; PUT /api/v1/settings
+GET  /api/v1/universe[/months]           the companies in force on a date or month
+GET  /api/v1/days[/{date}[/articles]]    per-day cross-section
+GET  /api/v1/tickers[/{t}[/series|/articles|/leadlag]]
+GET  /api/v1/correlations                the daily correlations as a series
+GET  /api/v1/leadlag[/history]           the rolling results and their history
+GET  /api/v1/sources[/{s}/series]        source coverage and comparison
+GET  /api/v1/charts/leadlag.png          the one chart the API draws
+GET  /data/index.json, /data/YYYY/MM/DD/<table>.parquet
+GET  /docs                               OpenAPI UI
+```
+
+Reads need nothing. `POST`, `PUT` and `DELETE` need
+`Authorization: Bearer <MURMUR_API_TOKEN>`; with no token set on the server
+they answer 503. Settings written through the API land in
+`<data_dir>/settings.toml`, a layer above the ops file and below the
+environment; secrets and the data directory can only be set in the
+environment.
+
+```bash
+curl -s localhost:8100/api/v1/latest | jq .matched_pairs
+curl -s -X POST localhost:8100/api/v1/jobs -H "Authorization: Bearer $MURMUR_API_TOKEN" \
+     -H 'content-type: application/json' -d '{"type":"news","params":{"from":"2026-10-01","to":"2026-10-31"}}'
+curl -s localhost:8100/api/v1/jobs/12/log | jq -r .text
+```
+
 ## Use
 
 ```bash
@@ -163,7 +205,8 @@ uv run murmur analyze                  # scores pending headlines, then the day'
 uv run murmur analyze --all            # recompute every day (after a schema change)
 uv run murmur export
 uv run murmur runs                     # recent runs and which stage failed
-uv run murmur schedule                 # the daily job, forever
+uv run murmur serve                    # the API + daily job + job worker (the server's main process)
+uv run murmur schedule                 # the scheduler alone, no HTTP (fallback)
 uv run murmur -v run                   # debug logging
 ```
 
@@ -254,9 +297,11 @@ requests and merges only build and smoke-test the image.
 
 The server pulls `latest` every morning, so a release is what deploys.
 `docker-compose.yml` is written for the server's conventions: a stack
-directory with `./data` (store, exports, heartbeat, Hugging Face cache) and
-`./config/murmur.toml` (may be empty), uid 1000, read-only root filesystem,
-no ports.
+directory with `./data` (store, exports, API-written settings, Hugging Face
+cache) and `./config/murmur.toml` (ops overrides, may be empty, read-only),
+uid 1000, read-only root filesystem, port 8100 on the LAN, a 60 s stop grace
+period for a job in flight, and `.env` holding `MURMUR_API_TOKEN` and the
+source keys.
 
 ```bash
 mkdir -p ~/murmur/data ~/murmur/config && cd ~/murmur

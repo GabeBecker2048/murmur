@@ -26,13 +26,33 @@ the three maintainers can merge. `dockerized` is an old branch kept on purpose.
 and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
 and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
 
+## The API and jobs (0.6.0)
+
+- `murmur serve` = uvicorn + `api.app.create_app(provider)`; lifespan opens/migrates the store
+  once, starts one `jobs.Worker` (scheduler tick inside it), stops it with a 55 s join.
+- `src/murmur/jobs.py` is core (no FastAPI): `JobContext`/`report()`/`check()` are no-ops
+  outside a job; `JobCancelled` is a BaseException; handlers in `HANDLERS` keyed by type;
+  `enqueue()` validates (`JobError` → 400, `DuplicateJob` → 409). The worker's `_tick` queues
+  the daily `run` job (priority -10) when the slot passed and no successful run/active job
+  exists; failed scheduled runs re-queue with `not_before`. Boot marks pre-boot running jobs
+  `interrupted` and drops pre-boot queued ones (`created_at < booted_at`).
+- `src/murmur/api/`: `deps.get_store` opens a per-request Store with `check_same_thread=False`
+  (FastAPI may switch threads between dependency and handler); DB handlers are plain `def`.
+  `auth.require_token` on the write routers only. Routes under `routes/`. `charts.py` renders
+  PNG bytes via `Figure` + `FigureCanvasAgg`, shared with the exporter.
+- Settings: `config.write_settings` applies a TOML-shaped patch to `<data_dir>/settings.toml`
+  (validate first, atomic replace); `LOCKED_KEYS` are refused; `ConfigProvider.get()` reloads
+  when either file changes. Tests: `tests/test_api.py`, `test_jobs.py`, `test_settings.py`.
+- Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.
+
 ## Commands
 
 ```bash
 uv sync --all-groups                      # .venv with CPU-only torch (Linux) + dev tools
 uv run murmur run [--date YYYY-MM-DD]     # universe -> news -> prices -> sentiment -> analyze -> export
 uv run murmur universe|news|prices|analyze|export  # one stage; universe --rebuild recomputes the month
-uv run murmur schedule                    # the daily job (container main process); runs / health
+uv run murmur serve                       # API + scheduler + worker (container main process)
+uv run murmur schedule                    # scheduler only, no HTTP; runs / health (HTTP) / health --file
 uv run murmur -v ...                      # debug logging; -c PATH for a config file
 uv run ruff check . && uv run ruff format --check .
 uv run pytest                             # no network, no model download
