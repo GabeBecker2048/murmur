@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from murmur.api.deps import get_store
 from murmur.clock import parse_date
+from murmur.publish import public
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -32,4 +33,4 @@ def universe(store: Store = Depends(get_store), date: str | None = None, month: 
     members = store.universe_month(month)
     if not members:
         raise HTTPException(404, f"no universe for {month}")
-    return {"month": month, "members": [m.__dict__ for m in members]}
+    return {"month": month, "members": public([m.__dict__ for m in members])}

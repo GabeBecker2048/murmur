@@ -113,10 +113,13 @@ nightly rsync of that volume to offsite storage.
 contributors agree to publishing. Data is published under **CC BY 4.0** per
 dataset, stated in the manifest, with two exceptions: `news` and `sentiment`
 carry FinBERT's CC BY-NC-SA 4.0 until a permissively licensed model replaces
-it, and `prices` is published only if a price source's terms allow
-redistribution in writing; none found so far (Databento declined on
-2026-11-06: any published derived result needs their Plus plan), so it stays
-private. Sources used under personal-use terms are replaced before any
+it, and `prices` (bars and returns) is published under a "source terms apply"
+notice, not CC BY: no vendor offers redistribution rights at a price a
+one-person project can carry (Databento declined on 2026-11-06; Tiingo asked,
+pending), prices are facts with no copyright, and the project is small and
+non-commercial, so Gabe accepted the residual risk on 2026-11-06 on the
+conditions of honest provenance, a takedown contact, rounded index figures, and
+removing the table on request. Every file carries its notice in its metadata. Sources used under personal-use terms are replaced before any
 public release.
 
 ## 0.1.0 - the package

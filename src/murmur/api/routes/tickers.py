@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from murmur.api.deps import get_config, get_store
 from murmur.clock import parse_date, today_in
 from murmur.config import Config
+from murmur.publish import public
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -33,7 +34,7 @@ def list_tickers(
     rows = store.tickers_coverage(month)
     if not rows:
         raise HTTPException(404, f"no universe for {month}")
-    return {"month": month, "items": [dict(r) for r in rows]}
+    return {"month": month, "items": public([dict(r) for r in rows])}
 
 
 @router.get("/tickers/{ticker}")
@@ -41,7 +42,7 @@ def get_ticker(ticker: str, store: Store = Depends(get_store)):
     info = store.ticker_info(ticker.upper())
     if info is None:
         raise HTTPException(404, f"{ticker.upper()} has never been in the universe")
-    return info
+    return public(info)
 
 
 @router.get("/tickers/{ticker}/series")

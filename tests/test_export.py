@@ -93,7 +93,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert set(companies["first_month"]) == {"2026-11"}
 
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.7.1"
+    assert index["murmur_version"] == "0.7.2"
     assert list(index["datasets"]) == [
         "companies",
         "m100",
@@ -103,7 +103,11 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
         "correlations",
     ]
     prices_ds = index["datasets"]["prices"]
-    assert prices_ds["cadence"] == "daily" and prices_ds["license"]["name"] == "CC BY 4.0"
+    assert prices_ds["cadence"] == "daily"
+    assert prices_ds["license"]["name"] == "Source terms apply (not openly licensed)"
+    assert "no rights" in prices_ds["license"]["note"] and prices_ds["license"]["contact"]
+    assert index["datasets"]["m100"]["license"]["name"] == "CC BY 4.0"
+    assert "licensing" in index
     assert prices_ds["tables"]["prices"]["key"] == ["ticker", "date"]
     assert prices_ds["first_date"] == prices_ds["last_date"] == "2026-11-05"
     entries = {e["path"]: e for e in prices_ds["files"]}
@@ -302,3 +306,49 @@ def test_changes_between_months(store, scorer, cfg):  # noqa: F811
     companies = pd.read_parquet(cfg.published_dir / "companies/2026/11/202611.companies.parquet")
     intel = companies.set_index("ticker").loc["INTC"]
     assert (intel["first_month"], intel["last_month"], intel["months"]) == ("2026-10", "2026-10", 1)
+
+
+def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
+    from murmur.export import read_metadata
+
+    oct30, oct29 = date(2026, 10, 30), date(2026, 10, 29)
+    prepared(store, scorer, cfg, day=oct30, prev=oct29)
+    prepared(store, scorer, cfg)
+    export_day(store, cfg, oct30, today=TODAY)
+    export_day(store, cfg, DAY_, today=TODAY)
+    base = cfg.published_dir
+    daily = read_metadata(base / "prices/2026/11/05/20261105.prices.parquet")
+    assert daily["murmur_dataset"] == "prices" and daily["murmur_table"] == "prices"
+    assert daily["license"].startswith("Source terms apply") and "yfinance" in daily["attribution"]
+    assert (
+        "no rights" in daily["notice"] and daily["contact"] and daily["murmur_version"] == "0.7.2"
+    )
+    assert daily["murmur_period"] == "2026-11-05" and daily["murmur_generated_at"].endswith("Z")
+    monthly = read_metadata(base / "m100/2026/11/202611.constituents.parquet")
+    assert monthly["license"] == "CC BY 4.0" and monthly["murmur_period"] == "2026-11"
+    compacted = read_metadata(base / "news/2026/10/202610.articles.parquet")
+    assert compacted["license"] == "CC BY-NC-SA 4.0" and compacted["murmur_table"] == "articles"
+    assert compacted["murmur_period"] == "2026-10"
+    # a second compaction (a later backfill) keeps the metadata
+    export_day(store, cfg, oct30, today=TODAY)
+    assert (
+        read_metadata(base / "news/2026/10/202610.articles.parquet")["license"] == "CC BY-NC-SA 4.0"
+    )
+
+
+def test_constituents_are_rounded(store, cfg):  # noqa: F811
+    from murmur.export import export_month
+    from murmur.models import UniverseMember
+
+    store.save_universe_month(
+        "2026-11",
+        [
+            UniverseMember("AAPL", "Apple", 5001541320704.0, 1, 320193, weight=0.09714904192),
+            UniverseMember("MSFT", "Microsoft", 3979920277504.0, 2, 789019, weight=0.07730525793),
+        ],
+        "t",
+    )
+    export_month(store, cfg, "2026-11")
+    df = pd.read_parquet(cfg.published_dir / "m100/2026/11/202611.constituents.parquet")
+    assert list(df["market_cap"]) == [5_000_000_000_000, 3_980_000_000_000]
+    assert list(df["weight"]) == [0.0971, 0.0773]

@@ -4,6 +4,29 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.7.2] - 2026-11-06
+
+Licensing made explicit, and prices published.
+
+### Added
+
+- Every Parquet file carries its license in the footer: `license`,
+  `license_url`, `attribution`, `notice`, `contact`, plus `murmur_dataset`,
+  `murmur_table`, `murmur_period`, `murmur_version`, `murmur_generated_at`.
+  Compaction keeps it. `/data` responses send the same as `Link` (rel
+  license) and `X-Murmur-*` headers, so CSV downloads carry it too.
+- The prices table (bars and returns) is published under a **source terms
+  apply** notice rather than CC BY: Murmur grants no rights in it, the bars
+  come from Yahoo Finance via yfinance, non-commercial research, no warranty,
+  takedown contact. `datasets.private` defaults to empty. The other five
+  datasets stay CC BY 4.0 (news and sentiment CC BY-NC-SA 4.0).
+- `datasets.contact` (default `sec.contact`) printed in every notice.
+- Market caps are rounded to three significant figures and weights to four
+  decimals wherever they are served or exported, so the index can never stand
+  in for a close.
+- Finnhub retries transient network errors (TLS handshake timeouts) twice
+  before giving up on a company.
+
 ## [0.7.1] - 2026-11-06
 
 Backfills get real history.

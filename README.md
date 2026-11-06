@@ -387,11 +387,17 @@ Coverage (`universe.size`, who gets news and sentiment) is the top of the
 index and may be smaller than it; a Murmur 250 is `[index] name = "m250"`,
 `size = 250` in the config.
 
-**Licenses.** Stated per dataset in `index.json`: CC BY 4.0 for `companies`,
-`m100`, `prices` and `correlations`; `news` and `sentiment` carry FinBERT's
-CC BY-NC-SA 4.0 until a permissively licensed model replaces it. Whether
-`prices` is served publicly depends on the price source's terms (see
-`ROADMAP.md`, Licensing).
+**Licenses.** Stated per dataset in `index.json`, stamped into every Parquet
+footer (`license`, `license_url`, `attribution`, `notice`, `contact`) and sent as
+`Link`/`X-Murmur-*` headers on every `/data` response, so a CSV download carries
+them too. `companies`, `m100` and `correlations` are CC BY 4.0: Murmur's own
+compilation and analysis. `news` and `sentiment` are CC BY-NC-SA 4.0 because the
+scores come from FinBERT, which is. `prices` (bars and returns) carries **no
+license from Murmur**: the bars are Yahoo Finance's facts collected under their
+terms and republished as-is for non-commercial research; use remains subject to
+the source's terms and the exchanges' policies, and a takedown contact is in the
+notice. Market caps are rounded to three significant figures and weights to four
+decimals everywhere, so the index cannot be read back into prices.
 
 ## Release and deploy
 

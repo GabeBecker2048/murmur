@@ -71,9 +71,11 @@ theme = "auto"                  # "auto", "light" or "dark"; visitors can switch
 
 [datasets]
 # Datasets served from /data only with the API token (still in the manifest,
-# flagged public = false). Keep "prices" here until the price source's terms
-# allow redistribution.
-private = ["prices"]
+# flagged public = false). Empty = everything public. The prices table is
+# published under a "source terms apply" notice, not CC BY (see publish.py).
+private = []
+# Contact printed in every license notice, for takedown requests; default sec.contact.
+contact = ""
 
 [api]
 host = "0.0.0.0"

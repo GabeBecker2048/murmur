@@ -363,7 +363,11 @@ def test_datasets_and_csv(client, provider):
     assert names == ["companies", "m100", "prices", "news", "sentiment", "correlations"]
     prices = next(d for d in listing["items"] if d["name"] == "prices")
     assert prices["file_count"] == 1 and prices["last_date"] == "2026-11-05"
-    assert "files" not in prices and prices["license"]["name"] == "CC BY 4.0"
+    assert "files" not in prices
+    assert prices["license"]["name"].startswith("Source terms apply")
+    assert prices["license"]["contact"] == "gabebecker2048@gmail.com"  # sec.contact fallback
+    companies = next(d for d in listing["items"] if d["name"] == "companies")
+    assert companies["license"]["name"] == "CC BY 4.0" and companies["license"]["contact"]
     ds = client.get("/api/v1/datasets/prices").json()
     assert (
         ds["total"] == 1 and ds["files"][0]["path"] == "prices/2026/11/05/20261105.prices.parquet"
@@ -383,16 +387,52 @@ def test_datasets_and_csv(client, provider):
     manifest = client.get("/data/index.json").json()
     assert manifest["datasets"]["m100"]["cadence"] == "monthly"
 
-    # prices is private by default until its source's terms allow publishing
-    assert manifest["datasets"]["prices"]["public"] is False
-    assert manifest["datasets"]["sentiment"]["public"] is True
-    private = "/data/prices/2026/11/05/20261105.prices.parquet"
-    refused = client.get(private)
-    assert refused.status_code == 403 and "not published" in refused.json()["detail"]
-    assert client.get(private + "?format=csv").status_code == 403
-    assert client.get(private, headers=AUTH).status_code == 200
-    assert client.get(private, headers={"Authorization": "Bearer wrong"}).status_code == 403
-    assert prices["public"] is False
+    # prices is public by default (0.7.2) under the source-terms notice
+    assert manifest["datasets"]["prices"]["public"] is True
+    prices_file = "/data/prices/2026/11/05/20261105.prices.parquet"
+    r = client.get(prices_file)
+    assert r.status_code == 200
+    assert r.headers["x-murmur-license"].startswith("Source terms apply")
+    assert (
+        r.headers["link"].startswith("<https://legal.yahoo.com")
+        and 'rel="license"' in r.headers["link"]
+    )
+    assert "Yahoo Finance" in r.headers["x-murmur-attribution"]
+    # the CSV path carries the same headers (CSV has no footer)
+    r = client.get(url + "?format=csv")
+    assert (
+        r.headers["x-murmur-license"] == "CC BY-NC-SA 4.0"
+        and "creativecommons" in r.headers["link"]
+    )
+    assert parquet.headers["x-murmur-license"] == "CC BY-NC-SA 4.0"
+
+
+def test_private_datasets_need_the_token(tmp_path):
+    from datetime import date as _date
+
+    from murmur.export import export_day
+
+    ops = tmp_path / "murmur.toml"
+    ops.write_text(
+        f'data_dir = "{tmp_path / "data"}"\n[sentiment]\nmodel = "m"\n'
+        '[universe]\nsource = "static"\n[universe.static]\nAAPL = "Apple"\nMSFT = "Microsoft"\n'
+        '[datasets]\nprivate = ["prices"]\n'
+    )
+    provider = ConfigProvider(ops, env={"MURMUR_API_TOKEN": TOKEN})
+    with Store(provider.get().store_path) as s:
+        seed_day(s)
+        export_day(s, provider.get(), _date(2026, 11, 5), today=_date(2026, 11, 5))
+    with TestClient(create_app(provider, run_worker=False)) as client:
+        manifest = client.get("/data/index.json").json()
+        assert manifest["datasets"]["prices"]["public"] is False
+        assert manifest["datasets"]["sentiment"]["public"] is True
+        private = "/data/prices/2026/11/05/20261105.prices.parquet"
+        refused = client.get(private)
+        assert refused.status_code == 403 and "not published" in refused.json()["detail"]
+        assert client.get(private + "?format=csv").status_code == 403
+        assert client.get(private, headers=AUTH).status_code == 200
+        assert client.get(private, headers={"Authorization": "Bearer wrong"}).status_code == 403
+        assert client.get("/api/v1/ui").json()["private_datasets"] == ["prices"]
 
 
 def test_scheduler_pause_resume_and_ui(client, provider):
@@ -412,7 +452,7 @@ def test_scheduler_pause_resume_and_ui(client, provider):
     ui = client.get("/api/v1/ui").json()
     assert ui["title"] == "Murmur" and ui["default_months"] == 3 and ui["theme"] == "auto"
     assert ui["index"] == {"name": "m100", "title": "Murmur 100", "size": 100}
-    assert ui["private_datasets"] == ["prices"] and ui["writes_enabled"] is True
+    assert ui["private_datasets"] == [] and ui["writes_enabled"] is True
     types = client.get("/api/v1/jobs/types").json()
     assert "backfill" in types["types"] and types["backfill_stages"][0] == "news"
     assert types["params"]["run"] == ["date", "kind"]
@@ -439,3 +479,14 @@ def test_scheduler_pause_resume_and_ui(client, provider):
         "to": "2026-11-05",
         "stages": ["prices", "analyze"],
     }
+
+
+def test_caps_and_weights_are_rounded_everywhere(client):
+    idx = client.get("/api/v1/index/m100").json()
+    assert (
+        idx["items"][0]["market_cap"] == 5_000_000_000_000 and idx["items"][0]["weight"] == 0.5556
+    )
+    assert client.get("/api/v1/index/m100/history/AAPL").json()["items"][0]["weight"] == 0.5556
+    assert client.get("/api/v1/universe").json()["members"][1]["market_cap"] == 4_000_000_000_000
+    assert client.get("/api/v1/tickers").json()["items"][0]["market_cap"] == 5_000_000_000_000
+    assert client.get("/api/v1/companies/AAPL").json()["history"][0]["weight"] == 0.5556
