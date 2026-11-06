@@ -1,11 +1,13 @@
-"""Stage orchestration for one day: news -> prices -> sentiment -> analyze -> export."""
+"""Stage orchestration for one day:
+universe -> news -> prices -> sentiment -> analyze -> export."""
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from murmur.export import export_day
 from murmur.sentiment import SentimentScorer, score_pending
 from murmur.sources.base import NewsSource, PriceSource
 from murmur.store import Store
-from murmur.universe import record_universe
+from murmur.universe import UniverseSource, applicable_month, membership_for
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +38,9 @@ def default_price_source(config: Config) -> PriceSource:
 def default_scorer(config: Config) -> SentimentScorer:
     from murmur.sentiment import FinBertScorer
 
-    return FinBertScorer(config.sentiment.model, config.sentiment.batch_size)
+    return FinBertScorer(
+        config.sentiment.model, config.sentiment.batch_size, config.sentiment.device
+    )
 
 
 @dataclass
@@ -47,14 +51,24 @@ class StageResult:
     seconds: float
 
 
-def universe_tickers(store: Store, config: Config, day: date) -> list[str]:
-    members = store.universe_for(day.isoformat()) or record_universe(store, config, day)
-    return [m.ticker for m in members]
+def universe_tickers(store: Store, day: date) -> list[str]:
+    tickers = [m.ticker for m in store.universe_for(day.isoformat())]
+    if not tickers:
+        raise RuntimeError(f"no universe recorded for {day} (did the universe stage fail?)")
+    return tickers
+
+
+def run_universe(
+    store: Store, config: Config, day: date, source: UniverseSource | None = None
+) -> str:
+    members, rebuilt = membership_for(store, config, day, source)
+    month = applicable_month(day)
+    return f"{len(members)} tickers for {month} ({'rebuilt' if rebuilt else 'cached'})"
 
 
 def run_news(store: Store, config: Config, day: date, source: NewsSource | None = None) -> str:
     source = source or default_news_source(config)
-    tickers = [m.ticker for m in record_universe(store, config, day)]
+    tickers = universe_tickers(store, day)
     seen_at = utc_now_iso()
     new = linked = failed = 0
     for ticker in tickers:
@@ -68,7 +82,7 @@ def run_news(store: Store, config: Config, day: date, source: NewsSource | None 
             _, is_new = store.upsert_article(article, ticker, seen_at)
             new += is_new
             linked += 1
-    if tickers and failed == len(tickers):
+    if failed == len(tickers):
         raise RuntimeError(f"news: every one of {failed} tickers failed")
     return f"{linked} articles across {len(tickers) - failed} tickers, {new} new" + (
         f", {failed} tickers failed" if failed else ""
@@ -77,7 +91,7 @@ def run_news(store: Store, config: Config, day: date, source: NewsSource | None 
 
 def run_prices(store: Store, config: Config, day: date, source: PriceSource | None = None) -> str:
     source = source or default_price_source(config)
-    tickers = universe_tickers(store, config, day)
+    tickers = universe_tickers(store, day)
     bars = source.fetch(tickers)
     if not bars:
         raise RuntimeError("prices: source returned no bars")
@@ -100,7 +114,7 @@ def run_sentiment(store: Store, config: Config, scorer: SentimentScorer | None =
 
 
 def run_analyze(store: Store, config: Config, day: date) -> DayResult:
-    return analyze_day(store, config, day, universe_tickers(store, config, day))
+    return analyze_day(store, config, day, universe_tickers(store, day))
 
 
 def run_export(store: Store, config: Config, day: date) -> list[Path]:
@@ -141,9 +155,11 @@ def run_all(
     news_source: NewsSource | None = None,
     price_source: PriceSource | None = None,
     scorer: SentimentScorer | None = None,
+    universe_source: UniverseSource | None = None,
 ) -> list[StageResult]:
     """Run every stage, continuing past failures. A non-trading day is not a failure."""
     stages: Iterable[tuple[str, Callable[[], object], Callable[[object], str]]] = (
+        ("universe", lambda: run_universe(store, config, day, universe_source), str),
         ("news", lambda: run_news(store, config, day, news_source), str),
         ("prices", lambda: run_prices(store, config, day, price_source), str),
         ("sentiment", lambda: run_sentiment(store, config, scorer), str),
@@ -151,3 +167,25 @@ def run_all(
         ("export", lambda: run_export(store, config, day), lambda ps: f"{len(ps)} files"),
     )
     return [_stage(name, fn, describe) for name, fn, describe in stages]
+
+
+def run_day(
+    store: Store,
+    config: Config,
+    day: date,
+    trigger: str,
+    attempt: int = 1,
+    **sources,
+) -> list[StageResult]:
+    """``run_all`` wrapped in a row of the ``runs`` table."""
+    run_id = store.start_run(day.isoformat(), trigger, attempt, utc_now_iso())
+    results = run_all(store, config, day, **sources)
+    ok = all(r.ok for r in results)
+    store.finish_run(run_id, utc_now_iso(), ok, json.dumps([asdict(r) for r in results]))
+    return results
+
+
+def format_results(results: list[StageResult]) -> str:
+    return "\n".join(
+        f"{'ok  ' if r.ok else 'FAIL'} {r.name:<9} {r.seconds:6.1f}s  {r.summary}" for r in results
+    )

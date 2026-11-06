@@ -13,7 +13,8 @@ from murmur.config import load_config
 from murmur.models import Article, PriceBar
 from murmur.sentiment import score_pending
 
-DAY = date(2026, 11, 5)
+DAY = date(2026, 11, 5)  # Thursday, a trading day
+SATURDAY = date(2026, 11, 7)
 TZ = "America/New_York"
 
 # ticker -> (name, headline, prev_close, close). Names sort: Alphabet, Apple, Meta,
@@ -29,22 +30,23 @@ COMPANIES = {
 @pytest.fixture
 def cfg(tmp_path):
     user = tmp_path / "c.toml"
-    lines = ["[sentiment]", 'model = "fake/keywords"', "[universe.static]"]
+    lines = ["[sentiment]", 'model = "fake/keywords"', "[universe]", 'source = "static"']
+    lines += ["[universe.static]"]
     lines += [f'{t} = "{v[0]}"' for t, v in COMPANIES.items()]
     user.write_text("\n".join(lines) + "\n")
     return load_config(user, env={})
 
 
-def seed(store, scorer, tickers=COMPANIES, with_prices=True):
+def seed(store, scorer, tickers=COMPANIES, with_prices=True, day=DAY):
     # insert in an order that matches neither tickers nor names
     for ticker in ["MSFT", "GOOGL", "META", "AAPL"]:
         if ticker not in tickers:
             continue
         name, headline, prev_close, close = tickers[ticker]
         store.upsert_article(
-            Article(f"https://e/{ticker}", headline, "2026-11-05T15:00:00Z", "yahoo"),
+            Article(f"https://e/{ticker}", headline, f"{day}T15:00:00Z", "yahoo"),
             ticker,
-            "2026-11-05T23:00:00Z",
+            f"{day}T23:00:00Z",
         )
         if with_prices:
             store.upsert_prices(
@@ -107,14 +109,21 @@ def test_rerun_is_idempotent(store, scorer, cfg):
 
 
 def test_non_trading_day_stores_sentiment_but_no_correlation(store, scorer, cfg):
-    seed(store, scorer, with_prices=False)
-    result = analyze_day(store, cfg, DAY, list(COMPANIES))
+    seed(store, scorer, with_prices=False, day=SATURDAY)
+    result = analyze_day(store, cfg, SATURDAY, list(COMPANIES))
     assert not result.trading_day
     assert "not a trading day" in result.note
     assert len(result.sentiment) == 4
     assert result.correlations == [] and result.pairs == []
     assert store.count("daily_sentiment") == 4
     assert store.count("correlations") == 0
+
+
+def test_trading_day_without_bars_is_an_error(store, scorer, cfg):
+    seed(store, scorer, with_prices=False)
+    with pytest.raises(RuntimeError, match="no price bars for trading day"):
+        analyze_day(store, cfg, DAY, list(COMPANIES))
+    assert store.count("daily_sentiment") == 4  # sentiment was still stored first
 
 
 def test_too_few_pairs(store, scorer, cfg):
@@ -147,14 +156,14 @@ def test_daily_returns_require_a_bar_on_the_day(store):
 
 
 def test_articles_outside_the_local_day_are_excluded(store, scorer, cfg):
-    # 03:00 UTC on the 6th is still 22:00 ET on the 5th; 05:00 UTC is the 6th in ET.
+    # 03:00 UTC on the 8th is still 22:00 ET on Saturday the 7th; 05:00 UTC is the 8th in ET.
     store.upsert_article(
-        Article("https://e/1", "Apple beats", "2026-11-06T03:00:00Z", "y"), "AAPL", "t"
+        Article("https://e/1", "Apple beats", "2026-11-08T03:00:00Z", "y"), "AAPL", "t"
     )
     store.upsert_article(
-        Article("https://e/2", "Apple misses", "2026-11-06T05:00:00Z", "y"), "AAPL", "t"
+        Article("https://e/2", "Apple misses", "2026-11-08T05:00:00Z", "y"), "AAPL", "t"
     )
     store.upsert_article(Article("https://e/3", "Apple misses", None, "y"), "AAPL", "t")
     score_pending(store, scorer)
-    result = analyze_day(store, cfg, DAY, ["AAPL"])
+    result = analyze_day(store, cfg, SATURDAY, ["AAPL"])
     assert result.sentiment == {"AAPL": (1, pytest.approx(0.7))}

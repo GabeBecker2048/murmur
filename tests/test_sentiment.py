@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from murmur.models import Article
-from murmur.sentiment import score_pending
+from murmur.sentiment import resolve_device, score_pending
 
 
 def add(store, n, ticker="AAPL"):
@@ -32,6 +32,15 @@ def test_score_pending_is_resumable(store, scorer):
     assert row["score"] == pytest.approx(0.7)
 
 
+def test_resolve_device():
+    assert resolve_device("cpu", cuda_available=True) == "cpu"
+    assert resolve_device("auto", cuda_available=False) == "cpu"
+    assert resolve_device("auto", cuda_available=True) == "cuda"
+    assert resolve_device("cuda", cuda_available=True) == "cuda"
+    with pytest.raises(RuntimeError, match="no CUDA"):
+        resolve_device("cuda", cuda_available=False)
+
+
 def test_scorer_length_mismatch_is_an_error(store):
     class Broken:
         model_name = "broken"
@@ -46,8 +55,9 @@ def test_scorer_length_mismatch_is_an_error(store):
 
 def test_cli_and_sources_do_not_import_torch():
     code = (
-        "import sys, murmur.cli, murmur.pipeline, murmur.sentiment, "
-        "murmur.sources.yahoo_news, murmur.sources.yfinance_prices, murmur.export; "
+        "import sys, murmur.cli, murmur.pipeline, murmur.sentiment, murmur.scheduler, "
+        "murmur.universe, murmur.sources.yahoo_news, murmur.sources.yfinance_prices, "
+        "murmur.sources.yahoo_screener, murmur.sources.sec, murmur.export; "
         "bad = {m for m in ('torch', 'transformers', 'matplotlib') if m in sys.modules}; "
         "sys.exit(f'imported {bad}' if bad else 0)"
     )

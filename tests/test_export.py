@@ -4,7 +4,7 @@ from datetime import date
 from murmur.analysis import analyze_day
 from murmur.export import export_day
 from murmur.universe import record_universe
-from tests.test_analysis import COMPANIES, cfg, seed  # noqa: F401
+from tests.test_analysis import COMPANIES, SATURDAY, cfg, seed  # noqa: F401
 
 DAY = date(2026, 11, 5)
 
@@ -34,7 +34,7 @@ def test_export_layout(store, scorer, cfg, tmp_path):  # noqa: F811
     assert (base / "articles/2026/11/05.csv").read_text().count("\n") == 5
 
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.1.0"
+    assert index["murmur_version"] == "0.2.0"
     entries = {e["path"]: e for e in index["files"]}
     assert "index.json" not in entries
     assert entries["prices/2026/11/05.csv"] == {
@@ -52,13 +52,13 @@ def test_export_layout(store, scorer, cfg, tmp_path):  # noqa: F811
 
 
 def test_export_without_prices_skips_scatter(store, scorer, cfg):  # noqa: F811
-    seed(store, scorer, with_prices=False)
-    record_universe(store, cfg, DAY)
-    analyze_day(store, cfg, DAY, list(COMPANIES))
-    written = export_day(store, cfg, DAY)
+    seed(store, scorer, with_prices=False, day=SATURDAY)
+    record_universe(store, cfg, SATURDAY)
+    analyze_day(store, cfg, SATURDAY, list(COMPANIES))
+    written = export_day(store, cfg, SATURDAY)
     names = {p.name for p in written}
-    assert "05-sentiment.png" in names and "05-correlation.png" not in names
-    assert (cfg.published_dir / "analysis/daily/2026/11/05.csv").read_text().count("\n") == 1
+    assert "07-sentiment.png" in names and "07-correlation.png" not in names
+    assert (cfg.published_dir / "analysis/daily/2026/11/07.csv").read_text().count("\n") == 1
 
 
 def test_export_is_rerunnable(store, scorer, cfg):  # noqa: F811
