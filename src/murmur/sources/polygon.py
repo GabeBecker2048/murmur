@@ -1,6 +1,8 @@
 """Polygon grouped daily bars: one request returns every US stock's bar for a
-date. Free tier: 5 calls a minute, end-of-day data, two years of history.
-Needs an API key."""
+date. Free tier: 5 calls a minute, two years of history, and **today's bar is
+refused until the day is over** (HTTP 403 NOT_AUTHORIZED), so on the free
+plan this source cannot feed the 18:00 run; it is for backfills. Needs an API
+key."""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from datetime import date
 
 from murmur.clock import is_trading_day, sessions_between, today_in
 from murmur.models import PriceBar
-from murmur.sources.base import RateLimiter, get_json, yahoo_symbol
+from murmur.sources.base import HttpError, RateLimiter, get_json, yahoo_symbol
 from murmur.sources.yfinance_prices import partial_bar_date
 
 log = logging.getLogger(__name__)
@@ -77,9 +79,15 @@ class PolygonPrices:
             if not is_trading_day(day):
                 continue
             self.limiter.wait()
-            payload = get_json(
-                URL.format(date=day.isoformat()), {"adjusted": "false", "apiKey": self.api_key}
-            )
+            try:
+                payload = get_json(
+                    URL.format(date=day.isoformat()), {"adjusted": "false", "apiKey": self.api_key}
+                )
+            except HttpError as e:
+                if e.status == 403 and "end of day" in str(e):
+                    log.warning("polygon: %s not available yet on this plan; skipped", day)
+                    continue
+                raise
             got = parse_grouped(payload if isinstance(payload, dict) else {}, day, wanted)
             log.debug("polygon %s: %d of %d tickers", day, len(got), len(tickers))
             bars += got

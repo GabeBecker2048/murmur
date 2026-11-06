@@ -194,7 +194,7 @@ def test_one_failing_ticker_is_tolerated_all_failing_is_not(cfg):
         summary = pipeline.run_news(store, cfg, DAY, [FakeNews(fail_for={"META"})])
         assert "1 tickers failed" in summary
         assert store.count("articles") == 4
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="every source failed"):
             pipeline.run_news(store, cfg, DAY, [FakeNews(fail_for=set(COMPANIES))])
 
 
@@ -231,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.5.0" in capsys.readouterr().out
+    assert "murmur 0.5.1" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):
@@ -300,8 +300,18 @@ def test_two_news_sources_are_ingested_and_counted(cfg):
         summary = pipeline.run_news(store, cfg, DAY, [FakeNews(), FakeRangeNews()])
         assert "fake-news: 8 articles" in summary and "fakerange: 4 articles, 4 new" in summary
         assert store.sources_seen() == ["fake-news", "fakerange"]
-        with pytest.raises(RuntimeError, match="fakerange failed for every ticker"):
-            pipeline.run_news(store, cfg, DAY, [FakeNews(), FakeRangeNews(fail_for=set(COMPANIES))])
+        # one dead source is tolerated when another delivered, and named
+        summary = pipeline.run_news(
+            store, cfg, DAY, [FakeNews(), FakeRangeNews(fail_for=set(COMPANIES))]
+        )
+        assert summary.endswith("DEAD: fakerange")
+        with pytest.raises(RuntimeError, match="every source failed"):
+            pipeline.run_news(
+                store,
+                cfg,
+                DAY,
+                [FakeNews(fail_for=set(COMPANIES)), FakeRangeNews(fail_for=set(COMPANIES))],
+            )
 
 
 def test_backfill_news_chunks_by_week_and_needs_a_ranged_source(cfg):

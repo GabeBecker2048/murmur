@@ -69,7 +69,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
 
     assert not (base / "2026/11/05/rolling_correlations.parquet").exists()  # nothing rolling yet
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.5.0"
+    assert index["murmur_version"] == "0.5.1"
     entries = {e["path"]: e for e in index["files"]}
     assert entries["2026/11/05/returns.parquet"] == {
         "table": "returns",

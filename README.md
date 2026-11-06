@@ -59,9 +59,9 @@ reconstructed, and `murmur universe` prints the list in force on a day.
 |---|---|---|---|---|
 | `yahoo` | news | nothing | no | the latest ~20 headlines per ticker; the default |
 | `finnhub` | news | API key | yes, ~1 year | company news by ticker and date; 60 calls a minute |
-| `gdelt` | news | nothing | yes, to 2015 | global news by company name; one request every 5 s, so a 100-ticker run takes ~9 min |
+| `gdelt` | news | nothing | yes, to 2015 | global news by company name; one request every 5 s. **Currently refuses every request** with a rate-limit message, from two different networks; keep it off until that changes |
 | `yfinance` | prices | nothing | yes | the default; one request for all tickers |
-| `polygon` | prices | API key | yes, 2 years | grouped daily bars, one request per trading day; 5 calls a minute |
+| `polygon` | prices | API key | yes, 2 years | grouped daily bars, one request per trading day; 5 calls a minute. The free plan refuses today's bar until the day is over, so it serves backfills, not the 18:00 run |
 
 `news.sources` lists the news sources the daily run queries; `prices.source`
 picks the price source. Keys go in `[finnhub]`/`[polygon] api_key` or the

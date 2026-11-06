@@ -4,6 +4,21 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.5.1] - 2026-11-06
+
+What the first live run of the new sources taught.
+
+### Fixed
+
+- A news source that fails for every ticker no longer fails the stage when
+  another source delivered; it is logged as an error and named as `DEAD` in
+  the summary. The stage fails only when every source failed. (GDELT's API
+  currently answers every request with a rate-limit message.)
+- Polygon on the free plan refuses today's bar until the day is over; that
+  day is now skipped with a warning instead of failing the fetch, so the
+  source is usable for backfills. It still cannot feed the 18:00 run on that
+  plan; yfinance stays the daily price source.
+
 ## [0.5.0] - 2026-11-06
 
 Sources. News and prices from more than one place, compared.
