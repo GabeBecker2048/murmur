@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from murmur.analysis import DayResult, analyze_day
+from murmur.analysis import DayResult, analyze_day, daily_returns
 from murmur.clock import is_trading_day, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
@@ -126,13 +126,15 @@ class AnalyzeResult:
 
 
 def backfill_days(store: Store, day: date) -> list[date]:
-    """Trading days in the last ``BACKFILL_DAYS`` before ``day`` that have price
-    bars but no correlation row yet."""
+    """Trading days in the last ``BACKFILL_DAYS`` before ``day`` with no
+    correlation row yet whose returns can now be computed (a bar for the day
+    and one before it)."""
     out = []
     for back in range(1, BACKFILL_DAYS + 1):
         prev = day - timedelta(days=back)
-        iso = prev.isoformat()
-        if not is_trading_day(prev) or store.correlations_on(iso) or not store.prices_on(iso):
+        if not is_trading_day(prev) or store.correlations_on(prev.isoformat()):
+            continue
+        if not daily_returns(store, prev):
             continue
         out.append(prev)
     return sorted(out)
