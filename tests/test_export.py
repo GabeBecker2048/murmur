@@ -69,14 +69,26 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert entries["universe/2026-11.csv"]["date"] == "2026-11"
 
 
-def test_non_trading_day_exports_empty_tables_and_no_charts(store, scorer, cfg):  # noqa: F811
+def test_non_trading_day_writes_no_empty_files(store, scorer, cfg):  # noqa: F811
     seed(store, scorer, with_prices=False, day=SATURDAY)
     record_universe(store, cfg, SATURDAY)
     analyze_day(store, cfg, SATURDAY, list(COMPANIES))
     written = export_day(store, cfg, SATURDAY, today=TODAY)
-    names = {p.name for p in written}
-    assert "07.parquet" in names and not any(n.endswith(".png") for n in names)
-    assert len(pd.read_parquet(cfg.published_dir / "articles/2026/11/07.parquet")) == 0
+    names = sorted(p.name for p in written)
+    assert names == ["2026-11.csv", "index.json"]  # only the universe has rows
+    assert not (cfg.published_dir / "articles/2026/11/07.parquet").exists()
+
+
+def test_stale_empty_files_are_removed(store, scorer, cfg):  # noqa: F811
+    prepared(store, scorer, cfg)
+    export_day(store, cfg, DAY_, today=TODAY)
+    corr = cfg.published_dir / "analysis/daily/2026/11/05.csv"
+    assert corr.exists()
+    store.conn.execute("DELETE FROM correlations")
+    export_day(store, cfg, DAY_, today=TODAY)
+    assert not corr.exists()
+    index = {e["path"] for e in json.loads((cfg.published_dir / "index.json").read_text())["files"]}
+    assert "analysis/daily/2026/11/05.csv" not in index
 
 
 def test_monthly_compaction(store, scorer, cfg):  # noqa: F811

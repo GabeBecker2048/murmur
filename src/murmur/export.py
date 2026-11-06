@@ -143,24 +143,36 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
         "returns": store.returns_on(iso),
         "sentiment": store.sentiment_on(iso, model),
     }
+    # A file with no rows is never written (and a stale one from an earlier
+    # export is removed), so the tree only lists days that have data.
     for table, records in tables.items():
         p = _day_path(base, table, day, ".parquet")
-        _write_parquet(p, COLUMNS[table], _rows(records, COLUMNS[table]))
-        written.append(p)
+        rows = _rows(records, COLUMNS[table])
+        if rows:
+            _write_parquet(p, COLUMNS[table], rows)
+            written.append(p)
+        else:
+            p.unlink(missing_ok=True)
 
     correlations = store.correlations_on(iso)
     p = _day_path(base, "analysis/daily", day, ".csv")
-    _write_csv(p, CORRELATION_COLUMNS, _rows(correlations, CORRELATION_COLUMNS))
-    written.append(p)
+    if correlations:
+        _write_csv(p, CORRELATION_COLUMNS, _rows(correlations, CORRELATION_COLUMNS))
+        written.append(p)
+    else:
+        p.unlink(missing_ok=True)
 
     per_ticker = _per_ticker_table(store, iso, model)
     p = _day_path(base, "analysis/daily", day, "-tickers.csv")
-    _write_csv(
-        p,
-        ["ticker", "window", "n_articles", "mean_score", "overnight", "intraday", "daily"],
-        per_ticker,
-    )
-    written.append(p)
+    if per_ticker:
+        _write_csv(
+            p,
+            ["ticker", "window", "n_articles", "mean_score", "overnight", "intraday", "daily"],
+            per_ticker,
+        )
+        written.append(p)
+    else:
+        p.unlink(missing_ok=True)
 
     written += _charts(base, day, per_ticker, correlations)
     written += compact_finished_months(base, month_key(today))
