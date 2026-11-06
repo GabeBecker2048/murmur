@@ -80,6 +80,33 @@ def next_session(day: date) -> date:
     return cal.date_to_session(day.isoformat(), direction="next").date()
 
 
+def session_offset(day: date, k: int) -> date:
+    """The trading day ``k`` sessions after ``day`` (negative ``k`` goes back).
+    ``day`` must be a trading day."""
+    if not is_trading_day(day):
+        raise ValueError(f"{day} is not a trading day")
+    out = day
+    for _ in range(abs(k)):
+        out = next_session(out) if k > 0 else previous_session(out)
+    return out
+
+
+def sessions_between(start: date, end: date) -> list[date]:
+    """Trading days in ``[start, end]``."""
+    return [d.date() for d in _calendar().sessions_in_range(start.isoformat(), end.isoformat())]
+
+
+def months_before(day: date, months: int) -> date:
+    """The same calendar day ``months`` earlier (clamped to the month's length)."""
+    month = day.month - months
+    year = day.year
+    while month <= 0:
+        month += 12
+        year -= 1
+    last = (date(year + (month // 12), month % 12 + 1, 1) - timedelta(days=1)).day
+    return date(year, month, min(day.day, last))
+
+
 def session_bounds(day: date) -> tuple[datetime, datetime]:
     """UTC open and close of a trading day (early closes included)."""
     cal = _calendar()

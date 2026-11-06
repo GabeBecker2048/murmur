@@ -78,8 +78,9 @@ def test_run_all_end_to_end_and_idempotent(cfg):
         assert len(store.universe_for("2026-11-05")) == 4
         # the 4th has a bar but nothing before it, so no return and no backfill
         assert store.universe_for("2026-11-04") == []
-        # fake articles are all intraday, so overnight has no pairs: intraday + day, 2 methods
-        assert store.count("correlations") == 4
+        # fake articles are all intraday, so the overnight window has no pairs:
+        # (intraday + day) x 3 return types x 2 methods, lag 0 only
+        assert store.count("correlations") == 12
         assert "intraday/intraday r=" in results[4].summary
         assert "overnight/overnight has 0 pairs" in results[4].summary
 
@@ -162,9 +163,12 @@ def test_analyze_backfills_a_day_whose_bars_arrived_late(cfg):
         by_name = {r.name: r for r in results}
         assert all(r.ok for r in results), [r.summary for r in results]
         assert "2026-11-04" in by_name["analyze"].summary.split("backfilled ")[1]
-        # the fake Nov 4 bar opens at its close, so intraday is flat and undefined: daily only
-        assert len(store.correlations_on("2026-11-04")) == 2
-        assert len(store.correlations_on("2026-11-05")) == 4
+        # Nov 4: intraday return is flat (open == close) so only overnight/daily returns
+        # correlate; with Nov 5 analysed, Nov 4 also gets its lag +1 rows
+        nov4 = store.correlations_on("2026-11-04")
+        assert {r["lag"] for r in nov4} == {0, 1}
+        assert "intraday" not in {r["return_type"] for r in nov4 if r["lag"] == 0}
+        assert {r["lag"] for r in store.correlations_on("2026-11-05")} == {-1, 0}
         assert (cfg.published_dir / "2026/11/04/correlations.parquet").exists()
         assert (cfg.published_dir / "2026/11/05/correlations.parquet").exists()
 
@@ -221,4 +225,37 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.3.0" in capsys.readouterr().out
+    assert "murmur 0.4.0" in capsys.readouterr().out
+
+
+def test_previous_session_is_reanalysed_and_reexported(cfg):
+    with Store(cfg.store_path) as store:
+        # Nov 4 with headlines of its own and a bar the day before, analysed on its own day
+        pipeline.run_universe(store, cfg, date(2026, 11, 4))
+        for t, (_, _, _, close, _, headline) in COMPANIES.items():
+            store.upsert_article(
+                Article(f"https://e/{t}/4", headline, "2026-11-04T15:00:00Z", "f"), t, "t"
+            )
+            store.upsert_prices([PriceBar(t, "2026-11-03", close, None, None, close, None, 1)], "t")
+        store.upsert_prices(FakePrices().fetch(list(COMPANIES)), "t")
+        pipeline.run_sentiment(store, cfg, FakeScorer())
+        pipeline.run_analyze(store, cfg, date(2026, 11, 4))
+        assert {r["lag"] for r in store.correlations_on("2026-11-04")} == {0}
+        results = pipeline.run_all(store, cfg, DAY, FakeNews(), FakePrices(), FakeScorer())
+        by_name = {r.name: r for r in results}
+        assert "re-analysed 2026-11-04" in by_name["analyze"].summary
+        assert {r["lag"] for r in store.correlations_on("2026-11-04")} == {0, 1}
+        assert (cfg.published_dir / "2026/11/04/correlations.parquet").exists()
+
+
+def test_analyze_all(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(pipeline, "default_news_source", lambda c: FakeNews())
+    monkeypatch.setattr(pipeline, "default_price_source", lambda c: FakePrices())
+    monkeypatch.setattr(pipeline, "default_scorer", lambda c: FakeScorer())
+    assert cli.main(["-c", str(cfg.source_path), "run", "--date", "2026-11-05"]) == 0
+    with Store(cfg.store_path) as store:
+        store.conn.execute("DELETE FROM correlations")
+    assert cli.main(["-c", str(cfg.source_path), "analyze", "--all"]) == 0
+    assert "re-analysed 1 days" in capsys.readouterr().out
+    with Store(cfg.store_path) as store:
+        assert store.count("correlations") == 12

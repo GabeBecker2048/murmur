@@ -7,10 +7,13 @@ from murmur.clock import (
     INTRADAY,
     OVERNIGHT,
     assign_window,
+    months_before,
     next_session,
     parse_utc,
     previous_session,
     session_bounds,
+    session_offset,
+    sessions_between,
     to_utc_iso,
     window_range,
 )
@@ -74,3 +77,25 @@ def test_sessions():
     open_at, close_at = session_bounds(date(2026, 11, 5))
     assert to_utc_iso(open_at) == "2026-11-05T14:30:00Z"
     assert to_utc_iso(close_at) == "2026-11-05T21:00:00Z"
+
+
+def test_session_arithmetic():
+    assert session_offset(date(2026, 11, 6), 1) == date(2026, 11, 9)  # Fri -> Mon
+    assert session_offset(date(2026, 11, 9), -1) == date(2026, 11, 6)
+    assert session_offset(date(2026, 11, 25), 1) == date(2026, 11, 27)  # over Thanksgiving
+    assert session_offset(date(2026, 11, 5), 0) == date(2026, 11, 5)
+    with pytest.raises(ValueError):
+        session_offset(date(2026, 11, 7), 1)
+    assert sessions_between(date(2026, 11, 5), date(2026, 11, 10)) == [
+        date(2026, 11, 5),
+        date(2026, 11, 6),
+        date(2026, 11, 9),
+        date(2026, 11, 10),
+    ]
+
+
+def test_months_before():
+    assert months_before(date(2026, 11, 5), 1) == date(2026, 10, 5)
+    assert months_before(date(2026, 11, 5), 12) == date(2025, 11, 5)
+    assert months_before(date(2026, 3, 31), 1) == date(2026, 2, 28)
+    assert months_before(date(2026, 1, 15), 3) == date(2025, 10, 15)

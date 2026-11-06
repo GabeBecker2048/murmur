@@ -75,12 +75,20 @@ are gitignored.
   `score_pending()` scores articles with no row for the configured model.
 - `analysis.py` `assign_windows` (articles missing trading_day/window), `compute_returns`
   (overnight/intraday/daily from the day's bar and the previous session's close, needs both),
-  `window_sentiment` per window, and `WINDOW_PAIRS` correlated at lag 0 (overnight/overnight,
-  intraday/intraday, day/daily), Pearson (+CI) and Spearman, join **by ticker**. A non-trading
-  day stores nothing (its news belongs to the next session); a trading day with no bars raises
-  so the scheduler retries. 0.4.0 adds lags and the full cross product.
+  `window_sentiment` per window. `analyze_day` correlates every window × return type at
+  `LAGS` (-1, 0, +1; lag = return session − news session, returns for other sessions read
+  from the `returns` table) with Pearson (+CI) and Spearman, join **by ticker**; `MATCHED_PAIRS`
+  are the headline lag-0 pairs. `rolling_analysis(as_of)` builds pandas frames of
+  window_sentiment and returns over 12 months, shifts returns by session index per lag,
+  and computes pooled (n ≥ `MIN_POOLED`) and per-ticker (n ≥ `MIN_TICKER`) rows for each
+  `HORIZONS` month count; rows for `as_of` are replaced. A non-trading day stores nothing; a
+  trading day with no bars raises so the scheduler retries.
+- `pipeline.run_analyze` order: backfill missing days → today → a second pass over the
+  previous session and the backfilled days (they gain lag +1 now) → rolling as of today.
+  Everything analysed is exported. `analyze_all` is `murmur analyze --all`.
 - `export.py` Parquet only (pandas + pyarrow). Date-first layout: `YYYY/MM/DD/<table>.parquet`
-  for every table in `DAY_TABLES` plus the two PNGs, `YYYY/MM/universe.parquet` per month.
+  for every table in `DAY_TABLES` plus the PNGs (sentiment, correlation, leadlag),
+  `YYYY/MM/universe.parquet` per month.
   `compact_finished_months` folds every month before the current one into
   `YYYY/MM/<table>.parquet` (dedup by `KEYS`), leaving only charts in the day dirs. A table
   with no rows is not written (stale file removed). `index.json` entries

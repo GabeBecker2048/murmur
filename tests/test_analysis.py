@@ -8,7 +8,13 @@ from datetime import date
 import pytest
 from scipy import stats
 
-from murmur.analysis import analyze_day, assign_windows, compute_returns, returns_available
+from murmur.analysis import (
+    analyze_day,
+    assign_windows,
+    compute_returns,
+    returns_available,
+    rolling_analysis,
+)
 from murmur.clock import DAY, INTRADAY, OVERNIGHT
 from murmur.config import load_config
 from murmur.models import Article, PriceBar
@@ -90,46 +96,91 @@ def test_windows_and_pairs(store, scorer, cfg):
     assert result.sentiment[OVERNIGHT]["AAPL"] == (1, pytest.approx(0.7))
     assert result.sentiment[DAY]["AAPL"] == (2, pytest.approx(0.7))
     assert result.sentiment[DAY]["MSFT"] == (2, pytest.approx(0.0))
-    by = {w: {p.ticker: p for p in pairs} for w, pairs in result.pairs.items()}
-    assert by[OVERNIGHT]["GOOGL"].ret == pytest.approx(-0.05)
-    assert by[INTRADAY]["GOOGL"].ret == pytest.approx(90 / 95 - 1)
-    assert by[DAY]["GOOGL"].ret == pytest.approx(-0.10)
-    assert by[DAY]["AAPL"].sentiment > 0 and by[DAY]["AAPL"].ret > 0
-    assert by[DAY]["META"].sentiment < 0 and by[DAY]["META"].ret < 0
+    by = {
+        (w, rt): {p.ticker: p for p in result.pairs[(w, rt, 0)]}
+        for w, rt in ((OVERNIGHT, "overnight"), (INTRADAY, "intraday"), (DAY, "daily"))
+    }
+    assert by[(OVERNIGHT, "overnight")]["GOOGL"].ret == pytest.approx(-0.05)
+    assert by[(INTRADAY, "intraday")]["GOOGL"].ret == pytest.approx(90 / 95 - 1)
+    assert by[(DAY, "daily")]["GOOGL"].ret == pytest.approx(-0.10)
+    assert by[(DAY, "daily")]["AAPL"].sentiment > 0 and by[(DAY, "daily")]["AAPL"].ret > 0
+    assert by[(DAY, "daily")]["META"].sentiment < 0 and by[(DAY, "daily")]["META"].ret < 0
+    # the cross product is there too: overnight news against the daily return
+    assert (
+        by[(OVERNIGHT, "overnight")]["AAPL"].sentiment
+        == result.pairs[(OVERNIGHT, "daily", 0)][0].sentiment
+    )
     rows = store.window_sentiment_on("2026-11-05", cfg.sentiment.model)
     assert len(rows) == 12  # 4 tickers x 3 windows
     art = store.conn.execute("SELECT trading_day, window FROM articles ORDER BY id").fetchall()
     assert {(a[0], a[1]) for a in art} == {("2026-11-05", OVERNIGHT), ("2026-11-05", INTRADAY)}
 
 
-def test_correlations_per_window_match_scipy(store, scorer, cfg):
+def test_correlations_cross_product_match_scipy(store, scorer, cfg):
     seed(store, scorer)
     result = analyze_day(store, cfg, DAY_, list(COMPANIES))
-    assert len(result.correlations) == 6  # 3 window/return pairs x 2 methods
+    # only lag 0 has returns (no session before the 4th, none after the 5th yet):
+    # 3 windows x 3 return types x 2 methods
+    assert len(result.correlations) == 18
+    assert {c.lag for c in result.correlations} == {0}
     for c in result.correlations:
-        pairs = result.pairs[c.window]
+        pairs = result.pairs[(c.window, c.return_type, c.lag)]
         x = [p.sentiment for p in pairs]
         y = [p.ret for p in pairs]
         expected = stats.pearsonr(x, y) if c.method == "pearson" else stats.spearmanr(x, y)
         assert c.estimate == pytest.approx(expected.statistic)
         assert c.p_value == pytest.approx(expected.pvalue)
-        assert c.n == 4 and c.lag == 0
+        assert c.n == 4
         assert c.tickers == ("AAPL", "GOOGL", "META", "MSFT")
-    pairs = {(c.window, c.return_type) for c in result.correlations}
-    assert pairs == {(OVERNIGHT, "overnight"), (INTRADAY, "intraday"), (DAY, "daily")}
+    assert {(c.window, c.return_type) for c in result.matched()} == {
+        (OVERNIGHT, "overnight"),
+        (INTRADAY, "intraday"),
+        (DAY, "daily"),
+    }
     stored = store.correlations_on("2026-11-05")
-    assert len(stored) == 6
-    assert {r["return_type"] for r in stored} == {"overnight", "intraday", "daily"}
-    pearson_day = next(c for c in result.correlations if c.window == DAY and c.method == "pearson")
+    assert len(stored) == 18
+    pearson_day = next(c for c in result.matched() if c.window == DAY)
     assert pearson_day.estimate > 0.9
     assert pearson_day.ci_low < pearson_day.estimate < pearson_day.ci_high
+
+
+def test_lagged_pairs_use_the_neighbouring_sessions(store, scorer, cfg):
+    """Thursday's news against Friday's return is lag +1; against Wednesday's, lag -1."""
+    wed, thu, fri = date(2026, 11, 4), date(2026, 11, 5), date(2026, 11, 6)
+    # bars for Tue..Fri so Wed, Thu and Fri all have returns; articles on Thu only
+    for i, (ticker, (_, prev_close, open_, close, _, _)) in enumerate(COMPANIES.items()):
+        # per-ticker gaps so no return type is constant across tickers on any day
+        g1, g2 = 1 + 0.01 * (i + 1), 1 + 0.02 * (i + 1)
+        store.upsert_prices(
+            [
+                PriceBar(ticker, "2026-11-03", prev_close, None, None, prev_close * g2, None, 1),
+                PriceBar(ticker, "2026-11-04", prev_close * g1, None, None, prev_close, None, 1),
+                PriceBar(ticker, "2026-11-05", open_, None, None, close, None, 1),  # as COMPANIES
+                PriceBar(ticker, "2026-11-06", close / g1, None, None, prev_close, None, 1),
+            ],
+            "t",
+        )
+    seed(store, scorer, with_prices=False)  # Thursday's articles
+    analyze_day(store, cfg, wed, list(COMPANIES))
+    analyze_day(store, cfg, fri, list(COMPANIES))
+    result = analyze_day(store, cfg, thu, list(COMPANIES))
+    assert {c.lag for c in result.correlations} == {-1, 0, 1}
+    assert len(result.correlations) == 54  # 3 x 3 x 3 lags x 2 methods
+    lead = {p.ticker: p for p in result.pairs[(DAY, "daily", 1)]}
+    lagged = {p.ticker: p for p in result.pairs[(DAY, "daily", -1)]}
+    _, prev_close, _, close, _, _ = COMPANIES["AAPL"]
+    assert lead["AAPL"].ret == pytest.approx(prev_close / close - 1)  # Friday's daily return
+    assert lagged["AAPL"].ret == pytest.approx(1 / 1.04 - 1)  # Wednesday's (AAPL is index 1)
+    assert lead["AAPL"].sentiment == lagged["AAPL"].sentiment  # Thursday's sentiment both times
+    stored = store.correlations_on("2026-11-05")
+    assert {r["lag"] for r in stored} == {-1, 0, 1}
 
 
 def test_rerun_is_idempotent(store, scorer, cfg):
     seed(store, scorer)
     analyze_day(store, cfg, DAY_, list(COMPANIES))
     analyze_day(store, cfg, DAY_, list(COMPANIES))
-    assert store.count("correlations") == 6
+    assert store.count("correlations") == 18
     assert store.count("window_sentiment") == 12
     assert store.count("returns") == 4
 
@@ -156,7 +207,7 @@ def test_ticker_without_previous_bar_has_no_return(store, scorer, cfg):
     store.conn.execute("DELETE FROM prices WHERE ticker = 'MSFT' AND date = '2026-11-04'")
     result = analyze_day(store, cfg, DAY_, list(COMPANIES))
     assert "MSFT" not in result.returns
-    assert [p.ticker for p in result.pairs[DAY]] == ["AAPL", "GOOGL", "META"]
+    assert [p.ticker for p in result.pairs[(DAY, "daily", 0)]] == ["AAPL", "GOOGL", "META"]
     assert all(c.n == 3 for c in result.correlations)
 
 
@@ -188,3 +239,80 @@ def test_assign_windows_skips_undated(store):
     store.upsert_article(Article("https://e/2", "x", "2026-11-05T15:00:00Z", "y"), "AAPL", "t")
     assert assign_windows(store, TZ) == 1
     assert assign_windows(store, TZ) == 0
+
+
+def seed_series(
+    store, days, tickers=("AAPL", "MSFT", "GOOGL", "META"), lead=1, model="fake/keywords"
+):
+    """Synthetic history: each ticker's `day` sentiment on session i equals its
+    daily return on session i + lead (news leads prices by `lead` sessions),
+    with a per-ticker offset so pooled and per-ticker series both correlate."""
+    import random
+
+    rng = random.Random(7)
+    rets = {t: [rng.uniform(-0.05, 0.05) for _ in days] for t in tickers}
+    for t in tickers:
+        store.upsert_returns(
+            (t, d.isoformat(), d.isoformat(), 100.0, 100.0, 100.0, r / 2, r / 2, r)
+            for d, r in zip(days, rets[t], strict=True)
+        )
+        store.upsert_prices([PriceBar(t, d.isoformat(), 1, 1, 1, 1, 1, 1) for d in days], "t")
+        for i, d in enumerate(days):
+            if i + lead < len(days):
+                score = rets[t][i + lead]
+                store.upsert_window_sentiment(d.isoformat(), DAY, model, {t: (3, score)})
+                store.upsert_window_sentiment(d.isoformat(), OVERNIGHT, model, {t: (1, score)})
+                store.upsert_window_sentiment(d.isoformat(), INTRADAY, model, {t: (2, -score)})
+
+
+def test_rolling_finds_the_lead(store, cfg):
+    from murmur.clock import sessions_between
+
+    days = sessions_between(date(2026, 8, 1), date(2026, 11, 5))  # ~68 sessions
+    seed_series(store, days, lead=1)
+    rows = rolling_analysis(store, cfg, date(2026, 11, 5), ["AAPL", "MSFT", "GOOGL", "META"])
+    by = {(r.months, r.window, r.return_type, r.lag, r.scope, r.ticker, r.method): r for r in rows}
+    # pooled, 3 months, day window vs daily return: lag +1 is the planted relationship
+    assert by[(3, DAY, "daily", 1, "pooled", "", "pearson")].estimate == pytest.approx(1.0)
+    assert abs(by[(3, DAY, "daily", 0, "pooled", "", "pearson")].estimate) < 0.5
+    assert abs(by[(3, DAY, "daily", -1, "pooled", "", "pearson")].estimate) < 0.5
+    # the intraday window was planted with the opposite sign
+    assert by[(3, INTRADAY, "daily", 1, "pooled", "", "pearson")].estimate == pytest.approx(-1.0)
+    # per ticker too, and Spearman agrees
+    assert by[(3, DAY, "daily", 1, "ticker", "AAPL", "pearson")].estimate == pytest.approx(1.0)
+    assert by[(3, DAY, "daily", 1, "ticker", "AAPL", "spearman")].estimate == pytest.approx(1.0)
+    # the 1-month horizon only sees ~24 sessions x 4 tickers = enough pooled, enough per ticker
+    assert (1, DAY, "daily", 1, "pooled", "", "pearson") in by
+    assert (
+        by[(1, DAY, "daily", 1, "pooled", "", "pearson")].n
+        < by[(3, DAY, "daily", 1, "pooled", "", "pearson")].n
+    )
+    # 12 months pooled covers everything we seeded (sessions from August)
+    assert (
+        by[(12, DAY, "daily", 1, "pooled", "", "pearson")].n
+        == by[(6, DAY, "daily", 1, "pooled", "", "pearson")].n
+    )
+    stored = store.rolling_on("2026-11-05")
+    assert len(stored) == len(rows)
+    assert {r["months"] for r in stored} == {1, 3, 6, 12}
+
+
+def test_rolling_respects_minimum_n(store, cfg):
+    from murmur.clock import sessions_between
+
+    days = sessions_between(date(2026, 10, 26), date(2026, 11, 5))  # 9 sessions
+    seed_series(store, days, tickers=("AAPL", "MSFT"), lead=0)
+    rows = rolling_analysis(store, cfg, date(2026, 11, 5), ["AAPL", "MSFT"])
+    assert rows == []  # 18 pooled observations < 30, 9 per ticker < 10
+    assert store.rolling_on("2026-11-05") == []
+
+
+def test_rolling_replaces_rows_for_the_day(store, cfg):
+    from murmur.clock import sessions_between
+
+    days = sessions_between(date(2026, 8, 1), date(2026, 11, 5))
+    seed_series(store, days, lead=1)
+    first = rolling_analysis(store, cfg, date(2026, 11, 5), ["AAPL", "MSFT", "GOOGL", "META"])
+    second = rolling_analysis(store, cfg, date(2026, 11, 5), ["AAPL", "MSFT"])
+    assert len(second) < len(first)
+    assert store.count("rolling_correlations") == len(second)

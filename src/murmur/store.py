@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -174,6 +174,25 @@ MIGRATIONS: dict[int, str] = {
     DROP TABLE correlations;
     ALTER TABLE correlations_v3 RENAME TO correlations;
     DROP TABLE daily_sentiment;
+    """,
+    4: """
+    CREATE TABLE rolling_correlations (
+        as_of       TEXT NOT NULL,
+        months      INTEGER NOT NULL,
+        window      TEXT NOT NULL,
+        return_type TEXT NOT NULL,
+        lag         INTEGER NOT NULL,
+        scope       TEXT NOT NULL,
+        ticker      TEXT NOT NULL,
+        method      TEXT NOT NULL,
+        n           INTEGER NOT NULL,
+        estimate    REAL NOT NULL,
+        p_value     REAL NOT NULL,
+        ci_low      REAL,
+        ci_high     REAL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (as_of, months, window, return_type, lag, scope, ticker, method)
+    );
     """,
 }
 
@@ -393,6 +412,7 @@ class Store:
             "window_sentiment",
             "returns",
             "correlations",
+            "rolling_correlations",
             "runs",
         }:
             raise ValueError(table)
@@ -556,6 +576,48 @@ class Store:
                 rows,
             )
         return len(rows)
+
+    def returns_between(self, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT ticker, date, overnight, intraday, daily FROM returns
+               WHERE date >= ? AND date <= ? ORDER BY date, ticker""",
+            (start, end),
+        ).fetchall()
+
+    def window_sentiment_between(self, start: str, end: str, model: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT date, ticker, window, n_articles, mean_score FROM window_sentiment
+               WHERE model = ? AND date >= ? AND date <= ? ORDER BY date, ticker, window""",
+            (model, start, end),
+        ).fetchall()
+
+    def days_with_returns(self) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT DISTINCT date FROM returns ORDER BY date")]
+
+    def replace_rolling(self, as_of: str, rows: Iterable[tuple]) -> int:
+        """Replace every rolling row for ``as_of`` with ``rows`` (``(months, window,
+        return_type, lag, scope, ticker, method, n, estimate, p_value, ci_low, ci_high,
+        computed_at)``)."""
+        rows = list(rows)
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute("DELETE FROM rolling_correlations WHERE as_of = ?", (as_of,))
+            self.conn.executemany(
+                """INSERT INTO rolling_correlations (as_of, months, window, return_type, lag,
+                       scope, ticker, method, n, estimate, p_value, ci_low, ci_high, computed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(as_of, *r) for r in rows],
+            )
+        return len(rows)
+
+    def rolling_on(self, as_of: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT as_of, months, window, return_type, lag, scope, ticker, method, n,
+                      estimate, p_value, ci_low, ci_high, computed_at
+               FROM rolling_correlations WHERE as_of = ?
+               ORDER BY months, window, return_type, lag, scope, ticker, method""",
+            (as_of,),
+        ).fetchall()
 
     def returns_on(self, date: str) -> list[sqlite3.Row]:
         return self.conn.execute(
