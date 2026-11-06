@@ -34,7 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--date", metavar="YYYY-MM-DD", help="day to process (default: today)")
         return p
 
-    add("run", "universe -> news -> prices -> sentiment -> analyze -> export for one day")
+    r = add("run", "universe -> news -> prices -> sentiment -> analyze -> export for one day")
+    r.add_argument(
+        "--kind",
+        choices=("full", "collect", "analyze"),
+        default="full",
+        help="full (default), collect (news only) or analyze (prices + analysis)",
+    )
     u = add("universe", "show (and if needed build) the universe in force on a day")
     u.add_argument("--rebuild", action="store_true", help="recompute the month even if cached")
     n = add("news", "fetch and store headlines for the universe")
@@ -112,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     with Store(config.store_path) as store:
         if args.command == "run":
-            results = pipeline.run_day(store, config, day, "manual")
+            results = pipeline.run_day(store, config, day, "manual", kind=args.kind)
             print(pipeline.format_results(results))
             return 0 if all(r.ok for r in results) else 1
         if args.command == "universe":

@@ -25,6 +25,23 @@ one lands.
   /history/{key}]`, `/api/v1/companies[/{key}]`. Every company row in the API
   and the files carries `cik`.
 
+- A `backfill` job: date range, any subset of news/prices/sentiment/analyze/
+  export in pipeline order, and `regenerate` (confirm required) for a clean
+  slate with the months' files rebuilt.
+- A split schedule: `schedule.analysis_time` adds a morning `analyze` run for
+  the previous session while `schedule.time` becomes a news-only `collect`
+  run, for price sources whose bar is not available at 18:00. Runs carry a
+  `kind` (schema v8); `murmur run --kind`.
+- Split ratios (`prices.splits`, Polygon's reference endpoint, `splits` table)
+  applied in `compute_returns`, so unadjusted sources give correct returns
+  across a split; `split_ratio` in the prices dataset.
+- `POST /api/v1/scheduler/pause` and `/resume` (`schedule.paused`, persisted).
+- `[ui]` settings (title, tagline, default horizon and method, theme) and
+  `GET /api/v1/ui` for the dashboard.
+- `[datasets] private`: datasets served from `/data` only with the API token
+  and flagged `public: false` in the manifest. `prices` is private by default
+  until its source's terms allow publishing.
+
 ### Changed
 
 - `/api/v1/universe` and `/universe/months` remain as deprecated aliases of

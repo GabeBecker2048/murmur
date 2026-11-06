@@ -19,6 +19,7 @@ from murmur.config import Config
 from murmur.export import export_day
 from murmur.sentiment import SentimentScorer, score_pending
 from murmur.sources.base import NewsSource, PriceSource
+from murmur.sources.splits import SplitsSource
 from murmur.store import Store
 from murmur.universe import UniverseSource, applicable_month, membership_for
 
@@ -64,6 +65,25 @@ def default_price_source(config: Config) -> PriceSource:
     from murmur.sources.yfinance_prices import YfinancePrices
 
     return YfinancePrices(tz=config.timezone)
+
+
+def default_splits_source(config: Config) -> SplitsSource:
+    """Polygon when asked for, or under ``auto`` when its key is configured; otherwise
+    none (with a warning for unadjusted price sources, whose split days would then
+    show a bogus return)."""
+    from murmur.sources.splits import NoSplits, PolygonSplits
+
+    choice = config.prices.splits
+    if choice == "polygon" or (choice == "auto" and config.keys.polygon):
+        return PolygonSplits(config.keys.polygon)
+    if config.prices.source == "polygon":
+        log.warning(
+            "prices.splits is %s and the %s source is unadjusted: a split day will show a "
+            "wrong return (set MURMUR_POLYGON_API_KEY or prices.splits)",
+            choice,
+            config.prices.source,
+        )
+    return NoSplits()
 
 
 def default_scorer(config: Config) -> SentimentScorer:
@@ -188,7 +208,13 @@ def backfill_news(
 # -- prices -------------------------------------------------------------------
 
 
-def run_prices(store: Store, config: Config, day: date, source: PriceSource | None = None) -> str:
+def run_prices(
+    store: Store,
+    config: Config,
+    day: date,
+    source: PriceSource | None = None,
+    splits: SplitsSource | None = None,
+) -> str:
     source = source or default_price_source(config)
     tickers = universe_tickers(store, day)
     bars = source.fetch(tickers)
@@ -196,11 +222,21 @@ def run_prices(store: Store, config: Config, day: date, source: PriceSource | No
         raise RuntimeError("prices: source returned no bars")
     n = store.upsert_prices(bars, source.name)
     covered = len({b.ticker for b in bars})
-    return f"{n} bars for {covered}/{len(tickers)} tickers"
+    days = sorted({b.date for b in bars})
+    n_splits = _ingest_splits(
+        store, config, date.fromisoformat(days[0]), date.fromisoformat(days[-1]), splits
+    )
+    note = f", {n_splits} splits" if n_splits else ""
+    return f"{n} bars for {covered}/{len(tickers)} tickers{note}"
 
 
 def backfill_prices(
-    store: Store, config: Config, start: date, end: date, source: PriceSource | None = None
+    store: Store,
+    config: Config,
+    start: date,
+    end: date,
+    source: PriceSource | None = None,
+    splits: SplitsSource | None = None,
 ) -> str:
     source = source or default_price_source(config)
     members, _ = membership_for(store, config, end)
@@ -209,7 +245,29 @@ def backfill_prices(
     if not bars:
         raise RuntimeError("prices: source returned no bars")
     n = store.upsert_prices(bars, source.name)
-    return f"{start}..{end}: {n} bars for {len({b.ticker for b in bars})}/{len(tickers)} tickers"
+    n_splits = _ingest_splits(store, config, start, end, splits)
+    note = f", {n_splits} splits" if n_splits else ""
+    return (
+        f"{start}..{end}: {n} bars for {len({b.ticker for b in bars})}/{len(tickers)} tickers{note}"
+    )
+
+
+def _ingest_splits(
+    store: Store, config: Config, start: date, end: date, splits: SplitsSource | None
+) -> int:
+    """Store the split ratios executing in ``[start, end]``. A failure here is logged,
+    not raised: bars are worth more than ratios, and the next run retries."""
+    splits = splits or default_splits_source(config)
+    if splits.name == "none":
+        return 0
+    try:
+        found = splits.fetch_range(start, end)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "splits: %s failed (%s); returns across a split day may be wrong", splits.name, e
+        )
+        return 0
+    return store.upsert_splits(found, splits.name) if found else 0
 
 
 # -- sentiment, analysis, export ---------------------------------------------
@@ -293,6 +351,37 @@ def analyze_all(store: Store, config: Config) -> list[date]:
     return days
 
 
+def analyze_range(store: Store, config: Config, start: date, end: date) -> list[date]:
+    """Recompute every trading day in ``[start, end]`` whose returns are available,
+    oldest first, plus the session before ``start`` (it gains lag +1 pairs), with the
+    rolling analysis as of each day. For backfills."""
+    from murmur.clock import previous_session, sessions_between
+
+    candidates = [previous_session(start), *sessions_between(start, end)]
+    days = [d for d in candidates if returns_available(store, d)]
+    for i, d in enumerate(days):
+        jobctl.report("analyze", i, len(days), d.isoformat())
+        members, _ = membership_for(store, config, d)
+        tickers = [m.ticker for m in members]
+        analyze_day(store, config, d, tickers)
+        if d >= start:
+            rolling_analysis(store, config, d, tickers)
+    return days
+
+
+def export_range(store: Store, config: Config, start: date, end: date) -> list[Path]:
+    written: list[Path] = []
+    days = [
+        date.fromisoformat(d)
+        for d in store.known_days()
+        if start.isoformat() <= d <= end.isoformat()
+    ]
+    for i, d in enumerate(days):
+        jobctl.report("export", i, len(days), d.isoformat())
+        written += export_day(store, config, d)
+    return written
+
+
 def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -> list[Path]:
     written = []
     for d in [*also, day]:
@@ -364,10 +453,13 @@ def run_all(
     scorer: SentimentScorer | None = None,
     universe_source: UniverseSource | None = None,
     news_sources: list[NewsSource] | None = None,
+    stages_wanted: Iterable[str] | None = None,
 ) -> list[StageResult]:
-    """Run every stage, continuing past failures. A non-trading day is not a failure."""
+    """Run every stage (or ``stages_wanted``), continuing past failures. A non-trading
+    day is not a failure."""
     backfilled: list[date] = []
     sources = news_sources or ([news_source] if news_source else None)
+    wanted = set(stages_wanted) if stages_wanted is not None else None
 
     def analyze() -> AnalyzeResult:
         result = run_analyze(store, config, day)
@@ -386,7 +478,22 @@ def run_all(
             lambda ps: f"{len(ps)} files",
         ),
     )
-    return [_stage(name, fn, describe) for name, fn, describe in stages]
+    return [
+        _stage(name, fn, describe)
+        for name, fn, describe in stages
+        if wanted is None or name in wanted
+    ]
+
+
+STAGES = ("universe", "news", "prices", "sentiment", "analyze", "export")
+KIND_STAGES = {
+    "full": STAGES,
+    "collect": ("universe", "news", "sentiment", "export"),
+    "analyze": ("universe", "prices", "sentiment", "analyze", "export"),
+}
+"""What each run kind does. ``collect`` is the evening slot when the schedule is split
+(news only, scored and exported so the day's headlines are published the same evening);
+``analyze`` is the morning slot for the previous session."""
 
 
 def run_day(
@@ -395,14 +502,62 @@ def run_day(
     day: date,
     trigger: str,
     attempt: int = 1,
+    kind: str = "full",
     **sources,
 ) -> list[StageResult]:
-    """``run_all`` wrapped in a row of the ``runs`` table."""
-    run_id = store.start_run(day.isoformat(), trigger, attempt, utc_now_iso())
-    results = run_all(store, config, day, **sources)
+    """``run_all`` for the stages of ``kind``, wrapped in a row of the ``runs`` table."""
+    run_id = store.start_run(day.isoformat(), trigger, attempt, utc_now_iso(), kind=kind)
+    results = run_all(store, config, day, stages_wanted=KIND_STAGES[kind], **sources)
     ok = all(r.ok for r in results)
     store.finish_run(run_id, utc_now_iso(), ok, json.dumps([asdict(r) for r in results]))
     return results
+
+
+def backfill(
+    store: Store,
+    config: Config,
+    start: date,
+    end: date,
+    stages: Iterable[str] = ("news", "prices", "sentiment", "analyze", "export"),
+    regenerate: bool = False,
+) -> dict:
+    """The admin backfill: a date range, the chosen stages in pipeline order, and
+    optionally a clean slate (the range's analysis rows deleted first). Articles are
+    never deleted; dedup keeps a re-fetched headline once."""
+    from murmur.clock import sessions_between
+    from murmur.export import rebuild_month
+
+    stages = [s for s in STAGES if s in set(stages)]
+    out: dict = {"from": start.isoformat(), "to": end.isoformat(), "stages": stages}
+    sessions = sessions_between(start, end)
+    if regenerate:
+        deleted: dict[str, int] = {}
+        for i, d in enumerate(sessions):
+            jobctl.report("regenerate", i, len(sessions), d.isoformat())
+            for table, n in store.delete_analysis(d.isoformat()).items():
+                deleted[table] = deleted.get(table, 0) + n
+        out["deleted"] = deleted
+    if "news" in stages:
+        jobctl.report("news", message=f"{start}..{end}")
+        out["news"] = backfill_news(store, config, start, end)
+    if "prices" in stages:
+        jobctl.report("prices", message=f"{start}..{end}")
+        out["prices"] = backfill_prices(store, config, start, end)
+    if "sentiment" in stages:
+        jobctl.report("sentiment")
+        out["sentiment"] = run_sentiment(store, config)
+    if "analyze" in stages:
+        out["analyzed"] = [d.isoformat() for d in analyze_range(store, config, start, end)]
+    if "export" in stages:
+        if regenerate:
+            months = sorted({d.isoformat()[:7] for d in sessions})
+            for i, month in enumerate(months):
+                jobctl.report("rebuild", i, len(months), month)
+                rebuild_month(store, config, month)
+            out["months_rebuilt"] = months
+        else:
+            out["files"] = len(export_range(store, config, start, end))
+    return out
 
 
 def format_results(results: list[StageResult]) -> str:

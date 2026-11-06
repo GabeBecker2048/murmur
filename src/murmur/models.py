@@ -39,6 +39,15 @@ class PriceBar:
 
 
 @dataclass(frozen=True)
+class Split:
+    ticker: str
+    execution_date: str
+    """First session traded at the new price, ``YYYY-MM-DD``."""
+    ratio: float
+    """New shares per old share (10.0 for a 10-for-1 split, 0.1 for a 1-for-10 reverse)."""
+
+
+@dataclass(frozen=True)
 class UniverseMember:
     ticker: str
     name: str

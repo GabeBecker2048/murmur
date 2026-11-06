@@ -62,7 +62,14 @@ def status(
             "coverage": config.universe.size,
             "news_sources": list(config.news.sources),
             "price_source": config.prices.source,
-            "schedule": {"time": config.schedule.time, "timezone": config.timezone},
+            "schedule": {
+                "time": config.schedule.time,
+                "analysis_time": config.schedule.analysis_time or None,
+                "slots": config.schedule.slots,
+                "paused": config.schedule.paused,
+                "timezone": config.timezone,
+            },
+            "private_datasets": list(config.datasets.private),
             "writes_enabled": bool(config.api.token),
         },
         "worker": {
@@ -110,6 +117,27 @@ def latest(config: Config = Depends(get_config), store: Store = Depends(get_stor
         "day": dict(summary) if summary else None,
         "last_run": dict(store.last_run()) if store.last_run() else None,
         "model": config.sentiment.model,
+    }
+
+
+@router.get("/ui")
+def ui(config: Config = Depends(get_config)):
+    """What the dashboard needs before its first data call."""
+    return {
+        "version": __version__,
+        "title": config.ui.title,
+        "tagline": config.ui.tagline,
+        "default_months": config.ui.default_months,
+        "default_method": config.ui.default_method,
+        "theme": config.ui.theme,
+        "index": {
+            "name": config.index.name,
+            "title": config.index.title,
+            "size": config.index.size,
+        },
+        "coverage": config.universe.size,
+        "private_datasets": list(config.datasets.private),
+        "writes_enabled": bool(config.api.token),
     }
 
 

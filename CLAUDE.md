@@ -26,16 +26,21 @@ the three maintainers can merge. `dockerized` is an old branch kept on purpose.
 and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
 and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
 
-## The API and jobs (0.6.0)
+## The API and jobs (0.6.0, extended in 0.7.0)
 
 - `murmur serve` = uvicorn + `api.app.create_app(provider)`; lifespan opens/migrates the store
   once, starts one `jobs.Worker` (scheduler tick inside it), stops it with a 55 s join.
 - `src/murmur/jobs.py` is core (no FastAPI): `JobContext`/`report()`/`check()` are no-ops
   outside a job; `JobCancelled` is a BaseException; handlers in `HANDLERS` keyed by type;
-  `enqueue()` validates (`JobError` → 400, `DuplicateJob` → 409). The worker's `_tick` queues
-  the daily `run` job (priority -10) when the slot passed and no successful run/active job
-  exists; failed scheduled runs re-queue with `not_before`. Boot marks pre-boot running jobs
-  `interrupted` and drops pre-boot queued ones (`created_at < booted_at`).
+  `enqueue()` validates (`JobError` → 400, `DuplicateJob` → 409). The worker's `_tick` walks
+  `config.schedule.slots` (`[(time, kind)]`: one `full` slot, or `collect` at `time` +
+  `analyze` at `analysis_time`), and queues a `run` job (priority -10, `params.kind`) for
+  `target_day(slot_time, kind)` when the slot passed and no successful run of that kind
+  (`runs.kind`, schema v8) or active job exists; nothing while `schedule.paused`. Failed
+  scheduled runs re-queue with `not_before`. Boot marks pre-boot running jobs `interrupted`
+  and drops pre-boot queued ones (`created_at < booted_at`). `pipeline.KIND_STAGES` says what
+  each kind runs; `pipeline.backfill` is the `backfill` job (range, stage subset,
+  `regenerate` needs `confirm`).
 - `src/murmur/api/`: `deps.get_store` opens a per-request Store with `check_same_thread=False`
   (FastAPI may switch threads between dependency and handler); DB handlers are plain `def`.
   `auth.require_token` on the write routers only. Routes under `routes/`. `charts.py` renders
@@ -95,7 +100,10 @@ are gitignored.
   ArtList by quoted company name (no key, 1 request / 5.5 s, 250 records max per query);
   `yfinance_prices.py` one `yf.download()` frame for all tickers (drops today's partial bar
   before 16:05 ET; `fetch_range` uses start/end); `polygon.py` grouped daily bars, one
-  request per trading day (key, 5/min, symbols use dots: `BRK.B`); `sec.py` fetches
+  request per trading day (key, 5/min, symbols use dots: `BRK.B`); `splits.py`
+  `SplitsSource` (`PolygonSplits` over `/v3/reference/splits`, `NoSplits`) feeding the
+  `splits` table that `analysis.compute_returns` applies (`_already_adjusted` guards sources
+  that restate history); `sec.py` fetches
   `company_tickers.json` (needs the contact User-Agent or 403); `yahoo_screener.py` pages
   `yf.screen` by market cap and looks up a ticker's country via `Ticker.info`.
   `pipeline.default_news_sources(config, names)` builds the configured list.
@@ -108,9 +116,9 @@ are gitignored.
   is this month from its first trading day, else the previous month. `StaticUniverse` for
   tests/offline (covered in full). Months built before 0.7.0 have `exchange = NULL` until
   `universe --rebuild`; the v7 migration computes their weights.
-- `scheduler.py` `Scheduler` with injectable clock/sleep for tests: fires at
-  `schedule.time`, retries, catches up a missed day on start, heartbeat file, SIGTERM stop.
-  `serve()` is `murmur schedule`. `pipeline.run_day` wraps `run_all` in a `runs` row.
+- `scheduler.py` `Scheduler` with injectable clock/sleep for tests: the pre-0.6.0 loop,
+  kept for `murmur schedule` (full runs only; no slots). `pipeline.run_day(kind=)` wraps
+  `run_all(stages_wanted=KIND_STAGES[kind])` in a `runs` row.
 - `sentiment.py` `FinBertScorer` imports torch/transformers inside `__init__`;
   `score_pending()` scores articles with no row for the configured model.
 - `analysis.py` everything below runs for `sources_for_analysis()` = `'all'` plus each source

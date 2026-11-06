@@ -13,7 +13,7 @@ from urllib.parse import parse_qs
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 
 from murmur import __version__
@@ -45,13 +45,43 @@ class PublishedFiles(StaticFiles):
     """The published tree. ``index.json`` must always be revalidated; day files are
     rewritten by the second analysis pass, so they get a short max-age. Any
     ``.parquet`` file is also served as CSV with ``?format=csv`` (converted on
-    request; CSV is never stored)."""
+    request; CSV is never stored). Files of a dataset listed in
+    ``[datasets] private`` are refused (403) unless the request carries the API
+    token, so a dataset whose source terms are unsettled stays in the manifest
+    but off the public internet."""
+
+    def __init__(self, *args, provider: ConfigProvider | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.provider = provider
 
     async def get_response(self, path: str, scope) -> Response:
+        dataset = path.split("/", 1)[0]
+        if self.provider is not None and dataset in self.provider.get().datasets.private:
+            if not self._has_token(scope):
+                return JSONResponse(
+                    {
+                        "detail": f"the {dataset!r} dataset is not published yet; "
+                        "its source's terms are being confirmed"
+                    },
+                    status_code=403,
+                    headers={"Cache-Control": "no-store"},
+                )
         query = parse_qs(scope.get("query_string", b"").decode())
         if path.endswith(".parquet") and query.get("format", [""])[0] == "csv":
             return self._csv_response(path)
         return await super().get_response(path, scope)
+
+    def _has_token(self, scope) -> bool:
+        import hmac
+
+        token = self.provider.get().api.token if self.provider else ""
+        if not token:
+            return False
+        for name, value in scope.get("headers", []):
+            if name == b"authorization":
+                scheme, _, given = value.decode().partition(" ")
+                return scheme.lower() == "bearer" and hmac.compare_digest(given.strip(), token)
+        return False
 
     def _csv_response(self, path: str) -> Response:
         full = Path(self.directory) / path
@@ -171,6 +201,10 @@ def create_app(
         app.include_router(module.router, prefix=API_PREFIX)
 
     published = provider.get().published_dir
-    app.mount("/data", PublishedFiles(directory=str(published), check_dir=False), name="data")
+    app.mount(
+        "/data",
+        PublishedFiles(directory=str(published), check_dir=False, provider=provider),
+        name="data",
+    )
     Path(published).mkdir(parents=True, exist_ok=True)
     return app

@@ -113,9 +113,10 @@ nightly rsync of that volume to offsite storage.
 contributors agree to publishing. Data is published under **CC BY 4.0** per
 dataset, stated in the manifest, with two exceptions: `news` and `sentiment`
 carry FinBERT's CC BY-NC-SA 4.0 until a permissively licensed model replaces
-it, and `prices` is published only if the price source's terms allow
-redistribution (Databento's end-of-day summary is the candidate, with its
-attribution). Sources used under personal-use terms are replaced before any
+it, and `prices` is published only if a price source's terms allow
+redistribution in writing; none found so far (Databento declined on
+2026-11-06: any published derived result needs their Plus plan), so it stays
+private. Sources used under personal-use terms are replaced before any
 public release.
 
 ## 0.1.0 - the package
@@ -177,8 +178,8 @@ Three pull requests, one release.
   monthly changes, `companies`, prices with returns folded in, CSV on request,
   `/api/v1/datasets`, `/api/v1/index/{name}`, `/api/v1/companies`.
 - Control: a `backfill` job (date range, chosen stages, optional regenerate),
-  a `[ui]` settings section, scheduler pause and resume, a licensed price
-  source (Databento end-of-day) with a morning analysis slot.
+  a `[ui]` settings section, scheduler pause and resume, split ratios for
+  unadjusted sources, a morning analysis slot, private datasets.
 - Static HTML/JS with Plotly.js, served by the API. Public dashboard: overview
   (the lead/lag chart and today's numbers), lead/lag explorer, ticker detail,
   sources comparison, index, downloads. Admin area behind the API token:

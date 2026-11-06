@@ -6,9 +6,9 @@ import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 
-from murmur.models import Article, PriceBar, SentimentScores, UniverseMember, normalize_title
+from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -277,6 +277,17 @@ MIGRATIONS: dict[int, str] = {
         SELECT sum(market_cap) FROM universe_months t WHERE t.month = universe_months.month
     ) WHERE market_cap IS NOT NULL;
     """,
+    8: """
+    -- 0.7.0: runs know what they did (full | collect | analyze); split ratios for returns.
+    ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'full';
+    CREATE TABLE splits (
+        ticker         TEXT NOT NULL,
+        execution_date TEXT NOT NULL,
+        ratio          REAL NOT NULL,
+        source         TEXT NOT NULL,
+        PRIMARY KEY (ticker, execution_date)
+    );
+    """,
 }
 
 JOB_ACTIVE = ("queued", "running", "cancelling")
@@ -531,12 +542,15 @@ class Store:
 
     # -- runs -----------------------------------------------------------------
 
-    def start_run(self, date: str, trigger: str, attempt: int, started_at: str) -> int:
+    def start_run(
+        self, date: str, trigger: str, attempt: int, started_at: str, kind: str = "full"
+    ) -> int:
         with self.conn:
             self.conn.execute("BEGIN")
             cur = self.conn.execute(
-                "INSERT INTO runs (date, trigger, attempt, started_at) VALUES (?, ?, ?, ?)",
-                (date, trigger, attempt, started_at),
+                """INSERT INTO runs (date, trigger, attempt, started_at, kind)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (date, trigger, attempt, started_at, kind),
             )
             return cur.lastrowid
 
@@ -548,17 +562,53 @@ class Store:
                 (finished_at, int(ok), stages_json, run_id),
             )
 
-    def successful_run_exists(self, date: str) -> bool:
+    def successful_run_exists(self, date: str, kind: str | None = None) -> bool:
+        """A successful run for the day; with ``kind``, one of that kind or a full run."""
+        if kind is None or kind == "full":
+            kinds = ("full",) if kind == "full" else ("full", "collect", "analyze")
+        else:
+            kinds = ("full", kind)
+        marks = ",".join("?" * len(kinds))
         row = self.conn.execute(
-            "SELECT 1 FROM runs WHERE date = ? AND ok = 1 LIMIT 1", (date,)
+            f"SELECT 1 FROM runs WHERE date = ? AND ok = 1 AND kind IN ({marks}) LIMIT 1",
+            (date, *kinds),
         ).fetchone()
         return row is not None
 
     def recent_runs(self, limit: int = 20) -> list[sqlite3.Row]:
         return self.conn.execute(
-            """SELECT id, date, trigger, attempt, started_at, finished_at, ok, stages
+            """SELECT id, date, trigger, attempt, started_at, finished_at, ok, stages, kind
                FROM runs ORDER BY id DESC LIMIT ?""",
             (limit,),
+        ).fetchall()
+
+    # -- splits ---------------------------------------------------------------
+
+    def upsert_splits(self, splits: Iterable[Split], source: str) -> int:
+        rows = [(x.ticker, x.execution_date, x.ratio, source) for x in splits]
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.executemany(
+                """INSERT INTO splits (ticker, execution_date, ratio, source)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT (ticker, execution_date) DO UPDATE SET
+                     ratio = excluded.ratio, source = excluded.source""",
+                rows,
+            )
+        return len(rows)
+
+    def splits_on(self, date: str) -> dict[str, float]:
+        """ticker -> ratio for splits that take effect on ``date``."""
+        rows = self.conn.execute(
+            "SELECT ticker, ratio FROM splits WHERE execution_date = ?", (date,)
+        )
+        return {r["ticker"]: r["ratio"] for r in rows}
+
+    def splits_between(self, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT ticker, execution_date, ratio, source FROM splits
+               WHERE execution_date >= ? AND execution_date <= ? ORDER BY execution_date, ticker""",
+            (start, end),
         ).fetchall()
 
     # -- articles -------------------------------------------------------------
@@ -929,8 +979,11 @@ class Store:
         """The day's bars with the three returns alongside (the ``prices`` dataset)."""
         return self.conn.execute(
             """SELECT p.ticker, p.date, p.open, p.high, p.low, p.close, p.adj_close, p.volume,
-                      p.source, r.prev_date, r.prev_close, r.overnight, r.intraday, r.daily
-               FROM prices p LEFT JOIN returns r ON r.ticker = p.ticker AND r.date = p.date
+                      p.source, r.prev_date, r.prev_close, r.overnight, r.intraday, r.daily,
+                      s.ratio AS split_ratio
+               FROM prices p
+               LEFT JOIN returns r ON r.ticker = p.ticker AND r.date = p.date
+               LEFT JOIN splits s ON s.ticker = p.ticker AND s.execution_date = p.date
                WHERE p.date = ? ORDER BY p.ticker""",
             (date,),
         ).fetchall()
@@ -1162,10 +1215,20 @@ class Store:
             )
         return n
 
-    def run_jobs_for_day(self, day: str) -> list[sqlite3.Row]:
+    def run_jobs_for_day(self, day: str, kind: str | None = None) -> list[sqlite3.Row]:
+        """Run jobs for a day; with ``kind``, only those of that kind (a job without a
+        ``kind`` param is a full run)."""
+        if kind is None:
+            return self.conn.execute(
+                "SELECT id, status, attempt FROM jobs WHERE type = 'run' AND day = ? ORDER BY id",
+                (day,),
+            ).fetchall()
         return self.conn.execute(
-            "SELECT id, status, attempt FROM jobs WHERE type = 'run' AND day = ? ORDER BY id",
-            (day,),
+            """SELECT id, status, attempt FROM jobs
+               WHERE type = 'run' AND day = ?
+                 AND coalesce(json_extract(params, '$.kind'), 'full') = ?
+               ORDER BY id""",
+            (day, kind),
         ).fetchall()
 
     # -- API read queries -----------------------------------------------------

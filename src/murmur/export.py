@@ -208,6 +208,7 @@ PRICES_COLUMNS = (
     "source",
     "prev_date",
     "prev_close",
+    "split_ratio",
     "overnight",
     "intraday",
     "daily",
@@ -327,7 +328,8 @@ def datasets(config: Config) -> list[Dataset]:
             "Prices",
             "Daily bars (open, high, low, close, adjusted close, volume) and the three "
             "returns computed from them: overnight (open over the previous close), "
-            "intraday (close over open) and daily (close over the previous close).",
+            "intraday (close over open) and daily (close over the previous close). "
+            "prev_close is split-adjusted when split_ratio is set.",
             DAILY,
             (Table("prices", PRICES_COLUMNS, ("ticker", "date"), q_prices),),
             CC_BY,
@@ -692,6 +694,7 @@ def manifest(base: Path, config: Config) -> dict:
             "cadence": ds.cadence,
             "tables": {t.name: {"columns": list(t.columns), "key": list(t.key)} for t in ds.tables},
             "license": ds.license,
+            "public": ds.name not in config.datasets.private,
             "file_count": len(files),
             "bytes": sum(f["bytes"] for f in files),
             "first_date": min(dates) if dates else None,
