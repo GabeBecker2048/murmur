@@ -294,8 +294,9 @@ company carries both `cik` and `ticker`. Any Parquet URL answers as CSV with
 
 ```python
 import pandas as pd
+
 m100 = pd.read_parquet("http://192.168.1.10:8100/data/m100/2026/11/202611.constituents.parquet")
-news = pd.read_parquet("data/published/news/2026/11/")   # a whole month from the tree
+news = pd.read_parquet("data/published/news/2026/11/")  # a whole month from the tree
 ```
 
 **The Murmur 100.** The universe is published as a cap-weighted index: the
