@@ -57,9 +57,13 @@ def parse_news_item(item: dict) -> Article | None:
 
 class YahooNews:
     name = SOURCE
+    supports_range = False
 
     def __init__(self, max_articles: int = 20):
         self.max_articles = max_articles
+
+    def fetch_range(self, ticker: str, start, end) -> list[Article]:
+        raise NotImplementedError("Yahoo's feed has no date range; use finnhub or gdelt")
 
     def fetch(self, ticker: str) -> list[Article]:
         import yfinance as yf

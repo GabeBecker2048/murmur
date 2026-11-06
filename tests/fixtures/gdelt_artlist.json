@@ -1,0 +1,6 @@
+{"articles": [
+ {"url": "https://www.reuters.com/apple-beats", "url_mobile": "", "title": "Apple beats estimates on record iPhone demand", "seendate": "20261105T151500Z", "socialimage": "", "domain": "reuters.com", "language": "English", "sourcecountry": "United States"},
+ {"url": "https://example.com/apple-lawsuit", "url_mobile": "", "title": "Apple faces new lawsuit over App Store fees", "seendate": "20261105T093000Z", "socialimage": "", "domain": "example.com", "language": "English", "sourcecountry": "United Kingdom"},
+ {"url": "https://example.com/no-date", "title": "Apple something", "seendate": "bogus", "domain": "example.com"},
+ {"url": "", "title": "no url", "seendate": "20261105T093000Z", "domain": "example.com"}
+]}

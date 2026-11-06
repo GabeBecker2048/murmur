@@ -37,6 +37,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     ]
     articles = pd.read_parquet(base / "2026/11/05/articles.parquet")
     assert len(articles) == 8 and set(articles["window"]) == {"overnight", "intraday"}
+    assert set(articles["sources"]) == {"yahoo"}
     assert list(articles.columns)[:6] == [
         "id",
         "url",
@@ -53,6 +54,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     ws = pd.read_parquet(base / "2026/11/05/window_sentiment.parquet")
     assert len(ws) == 12 and list(ws.columns) == [
         "date",
+        "source",
         "ticker",
         "window",
         "n_articles",
@@ -67,7 +69,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
 
     assert not (base / "2026/11/05/rolling_correlations.parquet").exists()  # nothing rolling yet
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.4.0"
+    assert index["murmur_version"] == "0.5.0"
     entries = {e["path"]: e for e in index["files"]}
     assert entries["2026/11/05/returns.parquet"] == {
         "table": "returns",
@@ -172,6 +174,7 @@ def test_rolling_table_and_leadlag_chart(store, scorer, cfg):  # noqa: F811
     assert "rolling_correlations.parquet" in names and "leadlag.png" in names
     df = pd.read_parquet(cfg.published_dir / "2026/11/05/rolling_correlations.parquet")
     assert set(df["months"]) == {1, 3, 6, 12} and set(df["scope"]) == {"pooled", "ticker"}
+    assert set(df["source"]) == {"all"}
     assert list(df.columns)[:5] == ["as_of", "months", "window", "return_type", "lag"]
     assert (cfg.published_dir / "2026/11/05/leadlag.png").stat().st_size > 5000
     index = {

@@ -11,6 +11,13 @@ section before changing schema, timing, sources or the published layout. `CHANGE
 records what shipped. The repo is private and is never published to PyPI
 (`Private :: Do Not Upload` classifier).
 
+## Repo rules
+
+Never push to `main`; every change is a branch and a pull request (branch protection cannot
+be enabled on this private repo without GitHub Pro, so this is convention). PRs are
+squash-merged, title + body become the commit, and the branch is deleted on merge. Only
+the three maintainers can merge. `dockerized` is an old branch kept on purpose.
+
 ## Releasing
 
 `./scripts/release.sh X.Y.Z` from an up-to-date `main` (after the PR that bumps
@@ -48,8 +55,11 @@ are gitignored.
   `sentiment` (model, batch_size, device), `sec` (contact email, required by the SEC),
   `universe` (source marketcap|static, size, min_market_cap), `schedule`.
 - `store.py` SQLite. `MIGRATIONS` is keyed by `PRAGMA user_version`; add a new entry for a
-  schema change, never edit a shipped one. All writes are upserts. Article upserts keep the
-  earliest `published_at` and never overwrite `first_seen_*`.
+  schema change, never edit a shipped one. All writes are upserts. `upsert_article` merges
+  by URL or by `title_norm` within `DEDUP_WINDOW_DAYS`, keeps the earliest `published_at`,
+  never overwrites `first_seen_*`, and records each reporting source in `article_sources`.
+  `ticker_scores(..., source)` restricts to a source; `upsert_window_sentiment` replaces the
+  whole (date, window, source) group, so pass every ticker in one call.
 - `clock.py` the only place dates become timestamps, plus the NYSE calendar
   (`exchange_calendars` XNYS, lazily built with a 3-year horizon so a long-lived scheduler
   never outruns it): `is_trading_day`, `first_trading_day`, `previous_session`,
@@ -57,12 +67,17 @@ are gitignored.
   tz) -> (trading_day, overnight|intraday)` and `window_range`. Windows: overnight = previous
   close to open (weekends/holidays fold into the next session's overnight), intraday = open to
   close, `DAY` = both.
-- `sources/` `base.py` has the `NewsSource`/`PriceSource` protocols. Tickers use the
-  SEC/Yahoo dash form (`BRK-B`). `yahoo_news.py` parses `Ticker.get_news()` items;
-  `yfinance_prices.py` parses one `yf.download()` frame for all tickers and drops today's
-  partial bar before 16:05 ET; `sec.py` fetches `company_tickers.json` (needs the contact
-  User-Agent or the SEC returns 403); `yahoo_screener.py` pages `yf.screen` by market cap
-  and looks up a ticker's country via `Ticker.info`.
+- `sources/` `base.py` has the `NewsSource`/`PriceSource` protocols (`fetch` for recent,
+  `fetch_range(start, end)` where `supports_range`), `RateLimiter`, and `get_json` (urllib).
+  Tickers use the SEC/Yahoo dash form (`BRK-B`). `yahoo_news.py` parses `Ticker.get_news()`
+  items (no ranges); `finnhub.py` company-news by date (key, 60/min); `gdelt.py` DOC API
+  ArtList by quoted company name (no key, 1 request / 5.5 s, 250 records max per query);
+  `yfinance_prices.py` one `yf.download()` frame for all tickers (drops today's partial bar
+  before 16:05 ET; `fetch_range` uses start/end); `polygon.py` grouped daily bars, one
+  request per trading day (key, 5/min, symbols use dots: `BRK.B`); `sec.py` fetches
+  `company_tickers.json` (needs the contact User-Agent or 403); `yahoo_screener.py` pages
+  `yf.screen` by market cap and looks up a ticker's country via `Ticker.info`.
+  `pipeline.default_news_sources(config, names)` builds the configured list.
 - `universe.py` `MarketCapUniverse.build(month)`: screener candidates in cap order, keep
   those on NYSE/Nasdaq with an SEC CIK, one per CIK, country == "United States" (cached in
   `companies` for a year), top `size`. `applicable_month(day)` is this month from its first
@@ -73,7 +88,9 @@ are gitignored.
   `serve()` is `murmur schedule`. `pipeline.run_day` wraps `run_all` in a `runs` row.
 - `sentiment.py` `FinBertScorer` imports torch/transformers inside `__init__`;
   `score_pending()` scores articles with no row for the configured model.
-- `analysis.py` `assign_windows` (articles missing trading_day/window), `compute_returns`
+- `analysis.py` everything below runs for `sources_for_analysis()` = `'all'` plus each source
+  once more than one has reported (`Correlation.source`, `DayResult.by_source`).
+  `assign_windows` (articles missing trading_day/window), `compute_returns`
   (overnight/intraday/daily from the day's bar and the previous session's close, needs both),
   `window_sentiment` per window. `analyze_day` correlates every window × return type at
   `LAGS` (-1, 0, +1; lag = return session − news session, returns for other sessions read

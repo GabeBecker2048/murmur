@@ -1,5 +1,6 @@
 """Stage orchestration for one day:
-universe -> news -> prices -> sentiment -> analyze -> export."""
+universe -> news -> prices -> sentiment -> analyze -> export,
+plus the date-range backfills behind ``murmur news/prices --from``."""
 
 from __future__ import annotations
 
@@ -28,14 +29,37 @@ correlation is missing but whose price bars have since arrived. Yahoo's daily
 bar for a day can vanish for a while in the evening, so the day's own run may
 fail analyze; the next day's run completes it."""
 
+BACKFILL_CHUNK_DAYS = 7
+"""Date-range news backfills ask each source for one week at a time."""
 
-def default_news_source(config: Config) -> NewsSource:
-    from murmur.sources.yahoo_news import YahooNews
 
-    return YahooNews(max_articles=config.news.max_articles)
+def default_news_sources(config: Config, names: dict[str, str]) -> list[NewsSource]:
+    """The configured news sources; ``names`` maps ticker -> company name (GDELT
+    searches by name)."""
+    out: list[NewsSource] = []
+    for name in config.news.sources:
+        if name == "yahoo":
+            from murmur.sources.yahoo_news import YahooNews
+
+            out.append(YahooNews(max_articles=config.news.max_articles))
+        elif name == "finnhub":
+            from murmur.sources.finnhub import FinnhubNews
+
+            out.append(FinnhubNews(config.keys.finnhub))
+        elif name == "gdelt":
+            from murmur.sources.gdelt import GdeltNews
+
+            out.append(GdeltNews(names))
+        else:
+            raise ValueError(f"unknown news source {name!r}")
+    return out
 
 
 def default_price_source(config: Config) -> PriceSource:
+    if config.prices.source == "polygon":
+        from murmur.sources.polygon import PolygonPrices
+
+        return PolygonPrices(config.keys.polygon, tz=config.timezone)
     from murmur.sources.yfinance_prices import YfinancePrices
 
     return YfinancePrices(tz=config.timezone)
@@ -57,11 +81,15 @@ class StageResult:
     seconds: float
 
 
-def universe_tickers(store: Store, day: date) -> list[str]:
-    tickers = [m.ticker for m in store.universe_for(day.isoformat())]
-    if not tickers:
+def universe_members(store: Store, day: date):
+    members = store.universe_for(day.isoformat())
+    if not members:
         raise RuntimeError(f"no universe recorded for {day} (did the universe stage fail?)")
-    return tickers
+    return members
+
+
+def universe_tickers(store: Store, day: date) -> list[str]:
+    return [m.ticker for m in universe_members(store, day)]
 
 
 def run_universe(
@@ -72,27 +100,84 @@ def run_universe(
     return f"{len(members)} tickers for {month} ({'rebuilt' if rebuilt else 'cached'})"
 
 
-def run_news(store: Store, config: Config, day: date, source: NewsSource | None = None) -> str:
-    source = source or default_news_source(config)
-    tickers = universe_tickers(store, day)
+# -- news ---------------------------------------------------------------------
+
+
+def _ingest(store: Store, sources: list[NewsSource], tickers: list[str], fetch: Callable) -> str:
+    """Run ``fetch(source, ticker)`` for every source and ticker, storing what
+    comes back. A ticker failing on one source is tolerated; a source failing
+    on every ticker fails the stage."""
     seen_at = utc_now_iso()
-    new = linked = failed = 0
-    for ticker in tickers:
-        try:
-            articles = source.fetch(ticker)
-        except Exception:
-            failed += 1
-            log.exception("news: %s failed", ticker)
-            continue
-        for article in articles:
-            _, is_new = store.upsert_article(article, ticker, seen_at)
-            new += is_new
-            linked += 1
-    if failed == len(tickers):
-        raise RuntimeError(f"news: every one of {failed} tickers failed")
-    return f"{linked} articles across {len(tickers) - failed} tickers, {new} new" + (
-        f", {failed} tickers failed" if failed else ""
-    )
+    parts = []
+    dead = []
+    for source in sources:
+        new = linked = failed = 0
+        for ticker in tickers:
+            try:
+                articles = fetch(source, ticker)
+            except Exception:
+                failed += 1
+                log.exception("news: %s failed for %s", source.name, ticker)
+                continue
+            for article in articles:
+                _, is_new = store.upsert_article(article, ticker, seen_at)
+                new += is_new
+                linked += 1
+        if tickers and failed == len(tickers):
+            dead.append(source.name)
+        parts.append(
+            f"{source.name}: {linked} articles, {new} new"
+            + (f", {failed} tickers failed" if failed else "")
+        )
+    if dead:
+        raise RuntimeError(f"news: {', '.join(dead)} failed for every ticker ({'; '.join(parts)})")
+    return "; ".join(parts)
+
+
+def run_news(
+    store: Store, config: Config, day: date, sources: list[NewsSource] | None = None
+) -> str:
+    members = universe_members(store, day)
+    tickers = [m.ticker for m in members]
+    sources = sources or default_news_sources(config, {m.ticker: m.name for m in members})
+    return _ingest(store, sources, tickers, lambda src, t: src.fetch(t))
+
+
+def backfill_news(
+    store: Store,
+    config: Config,
+    start: date,
+    end: date,
+    sources: list[NewsSource] | None = None,
+) -> str:
+    """Fetch articles published in ``[start, end]`` from every range-capable
+    source, a week at a time. Uses the universe in force on ``end``."""
+    members, _ = membership_for(store, config, end)
+    tickers = [m.ticker for m in members]
+    sources = sources or default_news_sources(config, {m.ticker: m.name for m in members})
+    ranged = [s for s in sources if getattr(s, "supports_range", False)]
+    if not ranged:
+        raise RuntimeError(
+            "news backfill needs a source with date ranges (finnhub or gdelt); "
+            f"configured: {[s.name for s in sources]}"
+        )
+    chunks = []
+    cursor = start
+    while cursor <= end:
+        chunk_end = min(cursor + timedelta(days=BACKFILL_CHUNK_DAYS - 1), end)
+        chunks.append((cursor, chunk_end))
+        cursor = chunk_end + timedelta(days=1)
+
+    def fetch(source, ticker):
+        out = []
+        for a, b in chunks:
+            out += source.fetch_range(ticker, a, b)
+        return out
+
+    return f"{start}..{end}: " + _ingest(store, ranged, tickers, fetch)
+
+
+# -- prices -------------------------------------------------------------------
 
 
 def run_prices(store: Store, config: Config, day: date, source: PriceSource | None = None) -> str:
@@ -104,6 +189,22 @@ def run_prices(store: Store, config: Config, day: date, source: PriceSource | No
     n = store.upsert_prices(bars, source.name)
     covered = len({b.ticker for b in bars})
     return f"{n} bars for {covered}/{len(tickers)} tickers"
+
+
+def backfill_prices(
+    store: Store, config: Config, start: date, end: date, source: PriceSource | None = None
+) -> str:
+    source = source or default_price_source(config)
+    members, _ = membership_for(store, config, end)
+    tickers = [m.ticker for m in members]
+    bars = source.fetch_range(tickers, start, end)
+    if not bars:
+        raise RuntimeError("prices: source returned no bars")
+    n = store.upsert_prices(bars, source.name)
+    return f"{start}..{end}: {n} bars for {len({b.ticker for b in bars})}/{len(tickers)} tickers"
+
+
+# -- sentiment, analysis, export ---------------------------------------------
 
 
 def run_sentiment(store: Store, config: Config, scorer: SentimentScorer | None = None) -> str:
@@ -198,6 +299,9 @@ def export_all(store: Store, config: Config) -> list[Path]:
     return written
 
 
+# -- orchestration ------------------------------------------------------------
+
+
 def _stage(name: str, fn: Callable[[], object], describe: Callable[[object], str]) -> StageResult:
     started = time.perf_counter()
     log.info("%s: starting", name)
@@ -218,7 +322,11 @@ def describe_day(result: DayResult) -> str:
     parts = [f"returns for {len(result.returns)} tickers, sentiment for {len(day_scores)}"]
     for c in result.matched():
         parts.append(f"{c.window}/{c.return_type} r={c.estimate:+.3f} (p={c.p_value:.3f}, n={c.n})")
-    parts.append(f"{len(result.correlations)} correlation rows")
+    sources = sorted({c.source for c in result.correlations} - {"all"})
+    parts.append(
+        f"{len(result.correlations)} correlation rows"
+        + (f" (per source: {', '.join(sources)})" if sources else "")
+    )
     if result.note:
         parts.append(result.note)
     return "; ".join(parts)
@@ -243,9 +351,11 @@ def run_all(
     price_source: PriceSource | None = None,
     scorer: SentimentScorer | None = None,
     universe_source: UniverseSource | None = None,
+    news_sources: list[NewsSource] | None = None,
 ) -> list[StageResult]:
     """Run every stage, continuing past failures. A non-trading day is not a failure."""
     backfilled: list[date] = []
+    sources = news_sources or ([news_source] if news_source else None)
 
     def analyze() -> AnalyzeResult:
         result = run_analyze(store, config, day)
@@ -254,7 +364,7 @@ def run_all(
 
     stages: Iterable[tuple[str, Callable[[], object], Callable[[object], str]]] = (
         ("universe", lambda: run_universe(store, config, day, universe_source), str),
-        ("news", lambda: run_news(store, config, day, news_source), str),
+        ("news", lambda: run_news(store, config, day, sources), str),
         ("prices", lambda: run_prices(store, config, day, price_source), str),
         ("sentiment", lambda: run_sentiment(store, config, scorer), str),
         ("analyze", analyze, describe_analyze),

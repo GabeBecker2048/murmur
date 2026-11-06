@@ -4,6 +4,32 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.5.0] - 2026-11-06
+
+Sources. News and prices from more than one place, compared.
+
+### Added
+
+- Finnhub company news and GDELT (DOC API) as news sources, Polygon grouped
+  daily bars as a price source, all behind the `NewsSource`/`PriceSource`
+  interfaces with rate limiting. `news.sources` and `prices.source` select
+  them; keys from config or `MURMUR_FINNHUB_API_KEY`/`MURMUR_POLYGON_API_KEY`.
+- Cross-source deduplication: an article seen through several sources is one
+  row (same URL, or the same normalized title within two days), keeping the
+  earliest publication time and recording every source in `article_sources`
+  (schema v5).
+- Per-source analysis: `window_sentiment`, `correlations` and
+  `rolling_correlations` carry a `source` dimension (`all` = pooled over
+  sources) and are computed for each source once more than one has reported.
+- Date-range backfills: `murmur news --from/--to` (finnhub, gdelt) and
+  `murmur prices --from/--to`, a week at a time for news.
+- `sources` column on exported articles.
+
+### Changed
+
+- The news stage reports per source and fails only if a source fails for
+  every ticker.
+
 ## [0.4.0] - 2026-11-06
 
 Lead/lag analysis. The first version that can say something about the

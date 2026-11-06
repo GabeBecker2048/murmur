@@ -37,8 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     add("run", "universe -> news -> prices -> sentiment -> analyze -> export for one day")
     u = add("universe", "show (and if needed build) the universe in force on a day")
     u.add_argument("--rebuild", action="store_true", help="recompute the month even if cached")
-    add("news", "fetch and store headlines for the universe")
-    add("prices", "fetch and store daily bars for the universe")
+    n = add("news", "fetch and store headlines for the universe")
+    n.add_argument("--from", dest="start", metavar="YYYY-MM-DD", help="backfill from this date")
+    n.add_argument("--to", dest="end", metavar="YYYY-MM-DD", help="backfill to (default: --date)")
+    pr = add("prices", "fetch and store daily bars for the universe")
+    pr.add_argument("--from", dest="start", metavar="YYYY-MM-DD", help="backfill from this date")
+    pr.add_argument("--to", dest="end", metavar="YYYY-MM-DD", help="backfill to (default: --date)")
     a = add("analyze", "score pending headlines, then compute the day's sentiment and correlations")
     a.add_argument(
         "--all",
@@ -115,9 +119,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cap = f"{m.market_cap / 1e9:10.1f}B" if m.market_cap else " " * 11
                 print(f"{m.rank:4d} {m.ticker:<8}{cap}  {m.name}")
         elif args.command == "news":
-            print(pipeline.run_news(store, config, day))
+            if args.start:
+                start, end = parse_date(args.start), parse_date(args.end) if args.end else day
+                print(pipeline.backfill_news(store, config, start, end))
+            else:
+                print(pipeline.run_news(store, config, day))
         elif args.command == "prices":
-            print(pipeline.run_prices(store, config, day))
+            if args.start:
+                start, end = parse_date(args.start), parse_date(args.end) if args.end else day
+                print(pipeline.backfill_prices(store, config, start, end))
+            else:
+                print(pipeline.run_prices(store, config, day))
         elif args.command == "analyze":
             print(pipeline.run_sentiment(store, config))
             if args.all:

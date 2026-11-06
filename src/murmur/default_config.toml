@@ -5,7 +5,21 @@ data_dir = "data"               # store at <data_dir>/murmur.sqlite, exports at 
 timezone = "America/New_York"   # the calendar that defines a "day"
 
 [news]
-max_articles = 20               # per ticker per fetch
+max_articles = 20               # per ticker per fetch (Yahoo)
+# Which news sources the daily run queries. "yahoo" needs nothing. "finnhub"
+# needs an API key and supports date ranges (used by `murmur news --from`).
+# "gdelt" needs no key, supports ranges, but is limited to one request every
+# 5 seconds, so a 100-ticker run takes ~9 minutes.
+sources = ["yahoo"]
+
+[prices]
+source = "yfinance"             # or "polygon" (needs an API key; one request per day for all tickers)
+
+[finnhub]
+api_key = ""                    # or MURMUR_FINNHUB_API_KEY
+
+[polygon]
+api_key = ""                    # or MURMUR_POLYGON_API_KEY
 
 [sentiment]
 model = "ProsusAI/finbert"
