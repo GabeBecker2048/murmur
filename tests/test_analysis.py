@@ -30,7 +30,8 @@ COMPANIES = {
 @pytest.fixture
 def cfg(tmp_path):
     user = tmp_path / "c.toml"
-    lines = ["[sentiment]", 'model = "fake/keywords"', "[universe]", 'source = "static"']
+    lines = [f'data_dir = "{tmp_path / "data"}"', "[sentiment]", 'model = "fake/keywords"']
+    lines += ["[universe]", 'source = "static"']
     lines += ["[universe.static]"]
     lines += [f'{t} = "{v[0]}"' for t, v in COMPANIES.items()]
     user.write_text("\n".join(lines) + "\n")

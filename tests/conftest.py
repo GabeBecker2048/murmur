@@ -38,6 +38,13 @@ class FakeScorer:
 
 
 @pytest.fixture(autouse=True)
+def isolated_cwd(tmp_path, monkeypatch):
+    """Every test runs from an empty temp dir, so a default data_dir of ./data
+    or a stray ./murmur.toml can never touch the repo's real data."""
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """Tests never touch the network; any attempt fails loudly instead of slowly."""
 
