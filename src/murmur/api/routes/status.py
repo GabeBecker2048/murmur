@@ -211,7 +211,7 @@ def report(
     store: Store = Depends(get_store),
     config: Config = Depends(get_config),
 ):
-    """One JSON document for a watcher (the host's murmur-check timer). Always 200
+    """One JSON document for a watcher (the host's murmur-check cron job). Always 200
     unless ``strict=true``, which answers 503 when there are problems."""
     from fastapi.responses import JSONResponse
 
