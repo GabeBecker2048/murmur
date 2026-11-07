@@ -248,6 +248,9 @@ reverse proxy; the API enforces the token either way.
 
 ## The API
 
+Every route and parameter is in [`docs/api.md`](docs/api.md) (generated from the
+OpenAPI document; `/docs` on a running instance is the interactive version).
+
 ```
 GET  /api/v1/health, /status, /latest, /logs
 GET  /api/v1/health/report[?strict=true] problems + warnings for a watcher (503 with strict when not ok)
@@ -258,6 +261,7 @@ GET  /api/v1/ui                          what the dashboard needs first: title, 
 GET  /api/v1/settings[/schema]           effective config with provenance; PUT /api/v1/settings
 GET  /api/v1/datasets[/{name}]           the published datasets and their files
 GET  /api/v1/index/m100[/months|/changes|/history/{key}]   the Murmur 100: constituents, weights
+GET  /api/v1/index/m100/level[?from&to], /level/{date|latest}   the daily level; one session's contributions
 GET  /api/v1/companies[/{key}]           every company ever ranked, by ticker or CIK
 GET  /api/v1/days[/{date}[/articles]]    per-day cross-section
 GET  /api/v1/tickers[/{t}[/series|/articles|/leadlag]]
@@ -315,7 +319,8 @@ uv run murmur -v run                   # debug logging
 Defaults live in `src/murmur/default_config.toml`. Copy
 `murmur.example.toml` to `./murmur.toml` (gitignored), or point `--config` or
 `MURMUR_CONFIG` at a file, and set only what you change. `MURMUR_DATA_DIR`
-overrides `data_dir`.
+overrides `data_dir`. Every key, its default and the environment variables are in
+[`docs/configuration.md`](docs/configuration.md).
 
 ```toml
 data_dir = "data"              # store at data/murmur.sqlite, exports at data/published/
@@ -380,13 +385,16 @@ Tickers everywhere use the SEC and Yahoo form with a dash (`BRK-B`).
 `data/murmur.sqlite` is the source of truth. `murmur export` writes the
 published datasets under `data/published/` (served at `/data/`);
 `murmur export --all` rebuilds the whole tree from the store. Six datasets,
-each its own directory, every file named after its date and table:
+each its own directory, every file named after its date and table. Every table and
+column is described in [`docs/data-dictionary.md`](docs/data-dictionary.md):
 
 ```
 index.json                                        the manifest: datasets, tables, columns, keys, licenses, files
 companies/2026/11/202611.companies.parquet        every company ever ranked: CIK, ticker, name, exchange, country
 m100/2026/11/202611.constituents.parquet          the Murmur 100: month, effective date, rank, CIK, ticker, cap, weight
 m100/2026/11/202611.changes.parquet               companies added and removed versus the previous month
+m100/2026/11/05/20261105.level.parquet            the daily level (base 1000) and the index's return
+m100/2026/11/05/20261105.contributions.parquet    each member's weight, return and contribution that day
 prices/2026/11/05/20261105.prices.parquet         OHLCV bar plus prev_close, overnight, intraday, daily
 news/2026/11/05/20261105.articles.parquet         one row per headline x company, sources, window, FinBERT scores
 sentiment/2026/11/05/20261105.sentiment.parquet   per company x window x source: headline count, mean score

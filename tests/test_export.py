@@ -363,3 +363,57 @@ def test_constituents_are_rounded(store, cfg):  # noqa: F811
     df = pd.read_parquet(cfg.published_dir / "m100/2026/11/202611.constituents.parquet")
     assert list(df["market_cap"]) == [5_000_000_000_000, 3_980_000_000_000]
     assert list(df["weight"]) == [0.0971, 0.0773]
+
+
+def test_index_level_and_contributions_are_daily_tables_of_the_index(store, scorer, cfg):  # noqa: F811
+    from murmur.export import read_metadata
+
+    prepared(store, scorer, cfg)
+    store.replace_index_levels(
+        [("2026-11-05", 1012.5, 0.0125, 4, 4, 1.0, 0)],
+        [
+            ("2026-11-05", "AAPL", 320193, 0.41234567, 0.02, 0.0082469, 8.25),
+            ("2026-11-05", "MSFT", 789019, 0.3, -0.01, -0.003, -3.0),
+        ],
+    )
+    base = cfg.published_dir
+    rel = set(paths(export_day(store, cfg, DAY_, today=TODAY), base))
+    assert {
+        "m100/2026/11/05/20261105.level.parquet",
+        "m100/2026/11/05/20261105.contributions.parquet",
+        "m100/2026/11/202611.constituents.parquet",
+    } <= rel
+    level = pd.read_parquet(base / "m100/2026/11/05/20261105.level.parquet")
+    assert level.iloc[0]["level"] == 1012.5 and not level.iloc[0]["rebalance"]
+    contrib = pd.read_parquet(base / "m100/2026/11/05/20261105.contributions.parquet")
+    assert list(contrib.columns) == [
+        "date",
+        "cik",
+        "ticker",
+        "weight",
+        "return",
+        "contribution",
+        "points",
+    ]
+    assert contrib.iloc[0]["ticker"] == "AAPL" and contrib.iloc[0]["weight"] == 0.4123
+    meta = read_metadata(base / "m100/2026/11/05/20261105.contributions.parquet")
+    assert meta["license"] == "CC BY 4.0" and meta["murmur_period"] == "2026-11-05"
+    manifest = json.loads((base / "index.json").read_text())["datasets"]["m100"]
+    cadences = {name: t["cadence"] for name, t in manifest["tables"].items()}
+    assert cadences == {
+        "constituents": "monthly",
+        "changes": "monthly",
+        "level": "daily",
+        "contributions": "daily",
+    }
+
+
+def test_index_level_files_are_compacted_with_finished_months(store, scorer, cfg):  # noqa: F811
+    oct30, oct29 = date(2026, 10, 30), date(2026, 10, 29)
+    prepared(store, scorer, cfg, day=oct30, prev=oct29)
+    store.replace_index_levels([("2026-10-30", 1000.0, None, 4, 0, None, 1)], [])
+    base = cfg.published_dir
+    export_day(store, cfg, oct30, today=TODAY)
+    assert (base / "m100/2026/10/202610.level.parquet").exists()
+    assert (base / "m100/2026/10/202610.constituents.parquet").exists()
+    assert not (base / "m100/2026/10/30").exists()

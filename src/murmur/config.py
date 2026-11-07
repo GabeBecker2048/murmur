@@ -107,6 +107,9 @@ class IndexConfig:
     """Dataset and endpoint name of the cap-weighted list (``m100``)."""
     size: int
     """How many companies are ranked and weighted; coverage is at most this."""
+    base_date: str = ""
+    """The level's base session (YYYY-MM-DD); empty = the first index month's first session."""
+    base_level: float = 1000.0
 
     @property
     def title(self) -> str:
@@ -403,6 +406,12 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
         if not re.fullmatch(INDEX_NAME_PATTERN, index_name):
             raise ConfigError(f"index.name must match {INDEX_NAME_PATTERN}, not {index_name!r}")
         index_size = int(index.get("size", universe.get("size", 100)))
+        base_date = str(index.get("base_date", "") or "")
+        if base_date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", base_date):
+            raise ConfigError(f"index.base_date must be YYYY-MM-DD or empty, not {base_date!r}")
+        base_level = float(index.get("base_level", 1000))
+        if base_level <= 0:
+            raise ConfigError("index.base_level must be > 0")
         if index_size < 1:
             raise ConfigError("index.size must be >= 1")
         if universe["source"] == "marketcap" and int(universe.get("size", 100)) > index_size:
@@ -436,7 +445,9 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 min_market_cap=float(universe.get("min_market_cap", 10_000_000_000)),
                 static=static,
             ),
-            index=IndexConfig(name=index_name, size=index_size),
+            index=IndexConfig(
+                name=index_name, size=index_size, base_date=base_date, base_level=base_level
+            ),
             schedule=ScheduleConfig(
                 time=schedule_time,
                 analysis_time=analysis_time,
@@ -569,6 +580,20 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "integer",
         "min": 1,
         "help": "Companies ranked and weighted each month; coverage is at most this.",
+    },
+    {
+        "path": "index.base_date",
+        "type": "string",
+        "pattern": r"^(\d{4}-\d{2}-\d{2})?$",
+        "help": (
+            "Base session of the daily level (YYYY-MM-DD). Empty = the first trading day of"
+            " the earliest index month on record."
+        ),
+    },
+    {
+        "path": "index.base_level",
+        "type": "number",
+        "help": "The level at the close of the base session.",
     },
     {
         "path": "universe.min_market_cap",

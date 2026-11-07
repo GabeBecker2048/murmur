@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from murmur.api.deps import get_config, get_store
 from murmur.clock import first_trading_day, parse_date
@@ -100,3 +100,58 @@ def history(
     if not rows:
         raise HTTPException(404, f"{key} has never been in {name}")
     return {"name": name, "key": key.upper(), "items": public([dict(r) for r in rows])}
+
+
+def _day(value: str | None, field: str) -> str | None:
+    if not value:
+        return None
+    try:
+        return parse_date(value).isoformat()
+    except ValueError:
+        raise HTTPException(422, f"{field} must be YYYY-MM-DD") from None
+
+
+@router.get("/index/{name}/level")
+def level(
+    name: str,
+    store: Store = Depends(get_store),
+    config: Config = Depends(get_config),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = None,
+):
+    """The daily level between ``from`` and ``to`` (default: the whole history)."""
+    _check(name, config)
+    rows = store.index_levels_between(
+        _day(from_, "from") or "0000-00-00", _day(to, "to") or "9999-12-31"
+    )
+    items = [{**dict(r), "rebalance": bool(r["rebalance"])} for r in rows]
+    return {
+        "name": name,
+        "title": config.index.title,
+        "base_level": config.index.base_level,
+        "base_date": items[0]["date"] if items else None,
+        "items": items,
+        "total": len(items),
+    }
+
+
+@router.get("/index/{name}/level/{day}")
+def level_day(
+    name: str,
+    day: str,
+    store: Store = Depends(get_store),
+    config: Config = Depends(get_config),
+):
+    """One session: the level and every member's start-of-day weight, daily return and
+    contribution (return units and index points), largest contribution first.
+    ``latest`` for the most recent session."""
+    _check(name, config)
+    iso = store.latest_index_level_day() if day == "latest" else _day(day, "day")
+    row = store.index_level_on(iso) if iso else None
+    if row is None:
+        raise HTTPException(404, f"no index level for {day}")
+    return {
+        "name": name,
+        **{**dict(row), "rebalance": bool(row["rebalance"])},
+        "contributions": [dict(r) for r in store.index_contributions_on(iso)],
+    }
