@@ -4,9 +4,10 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
-## [0.8.0] - Unreleased
+## [0.8.0] - 2026-11-07
 
-Hardening. Four pull requests; released when the last one lands.
+Hardening: four services, offsite backup, a health report, the shuffle test, the daily
+Murmur 100 level and generated docs.
 
 ### Added
 
@@ -46,8 +47,8 @@ Hardening. Four pull requests; released when the last one lands.
 - `GET /api/v1/health/report` (`?strict=true` answers 503 when not ok):
   problems (stale heartbeats, a daily run with no success after its retries, a
   stale snapshot or offsite copy, low disk) and warnings (failed jobs in the
-  last 24 h, paused, offsite not configured). `deploy/murmur-check.sh` and its
-  systemd timer read it on the host twice a day and notify through `ntfy-send`.
+  last 24 h, paused, offsite not configured). `deploy/murmur-check.sh`, run from
+  cron on the host twice a day, reads it and notifies through `ntfy-send`.
 - The shuffle (placebo) test runs with every analysis: for each horizon and lag
   of day sentiment vs the daily return, the real pooled r next to 200 shuffles
   of each session's sentiment across its companies (`null_mean`, `null_sd`,

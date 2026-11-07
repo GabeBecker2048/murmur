@@ -317,7 +317,7 @@ Source Series
 
 ### `GET /api/v1/health/report`
 
-One JSON document for a watcher (the host's murmur-check timer). Always 200 unless ``strict=true``, which answers 503 when there are problems.
+One JSON document for a watcher (the host's murmur-check cron job). Always 200 unless ``strict=true``, which answers 503 when there are problems.
 
 | Parameter | In | Type | Default |
 |---|---|---|---|

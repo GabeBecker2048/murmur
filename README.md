@@ -506,8 +506,8 @@ the server's storage disk, 14 kept).
 after its retries, a snapshot older than a day, an offsite copy older than
 `backup.max_age_hours`, under 5 GiB free) and `warnings` (failed or interrupted
 jobs in the last 24 h, the scheduler paused, offsite not configured).
-`deploy/murmur-check.sh` with its systemd timer runs on the host at 07:00 and
-20:15 Eastern and sends any problems through the homelab's `ntfy-send`; the
+`deploy/murmur-check.sh` runs from cron on the host at 09:05 and 20:15 Eastern
+and sends any problems through the homelab's `ntfy-send`; the
 containers hold no notification token. `MURMUR_LOG_FORMAT=json` makes the
 process log one JSON object per line.
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Murmur watcher on gabe-server: read the API's health report and notify through
 # ntfy-send (the homelab's only notification path; the containers hold no token).
-# Install: /home/gabe/bin/murmur-check.sh + deploy/murmur-check.{service,timer} as user
-# units (systemctl --user enable --now murmur-check.timer). Runs at 07:00 ET (after
-# the 04:30 snapshot and its upload) and 20:15 ET (after the 18:00 run and retries).
+# Install: /home/gabe/bin/murmur-check.sh, from gabe's crontab (the server clock is
+# America/Chicago; user systemd timers would need lingering):
+#   5 8 * * *   /home/gabe/bin/murmur-check.sh >> /home/gabe/.murmur-check.log 2>&1
+#   15 19 * * * /home/gabe/bin/murmur-check.sh >> /home/gabe/.murmur-check.log 2>&1
+# 09:05 ET is after the 04:30 snapshot, its upload and ntfy-send's lights-out; 20:15 ET
+# is after the 18:00 run and its retries.
 # Test without notifying: MURMUR_CHECK_DRY=1 murmur-check.sh
 set -euo pipefail
 
