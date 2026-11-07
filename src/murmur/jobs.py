@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from murmur.clock import utc_now_iso
@@ -241,17 +241,23 @@ def _export(store: Store, config: Config, params: dict) -> dict:
 def _backup(store: Store, config: Config, params: dict) -> dict:
     import sqlite3
 
-    keep = int(params.get("keep", 7))
-    out_dir = config.data_dir / "backups"
+    keep = int(params.get("keep") or config.backup.keep)
+    out_dir = config.backups_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     dest = out_dir / f"murmur_{stamp}.sqlite"
-    with sqlite3.connect(dest) as target:
+    part = dest.with_name(dest.name + ".part")  # the offsite uploader ignores *.part
+    part.unlink(missing_ok=True)
+    target = sqlite3.connect(part)
+    try:
         store.conn.backup(target)
         (ok,) = target.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        target.close()
     if ok != "ok":
-        dest.unlink(missing_ok=True)
+        part.unlink(missing_ok=True)
         raise RuntimeError(f"integrity_check: {ok}")
+    part.replace(dest)
     snapshots = sorted(out_dir.glob("murmur_*.sqlite"))
     for old in snapshots[:-keep] if keep > 0 else []:
         old.unlink()
@@ -375,8 +381,10 @@ def validate(type_: str, params: dict, confirm: bool) -> tuple[dict, str | None]
         if not isinstance(params["month"], str) or len(params["month"]) != 7:
             raise JobError("month must be YYYY-MM")
         clean["month"] = params["month"]
-    if type_ == "backup":
-        clean["keep"] = int(params.get("keep", 7))
+    if type_ == "backup" and params.get("keep") is not None:
+        clean["keep"] = int(params["keep"])
+        if clean["keep"] < 1:
+            raise JobError("keep must be >= 1")
     if type_ == "delete_analysis":
         clean["date"] = _iso(params.get("date"), "date")
     if type_ == "delete_scores":
@@ -510,6 +518,10 @@ def tick(provider: ConfigProvider, now: datetime | None = None) -> list[int]:
                 job_id = _queue_slot(store, config, now, slot_time, kind)
                 if job_id is not None:
                     queued.append(job_id)
+            if config.backup.time:
+                job_id = _queue_backup(store, config, now)
+                if job_id is not None:
+                    queued.append(job_id)
     write_heartbeat(config.heartbeat_path)
     if queued:
         Worker.wake_all()
@@ -542,6 +554,22 @@ def _queue_slot(store: Store, config: Config, now: datetime, slot: str, kind: st
         attempt=attempts + 1,
     )
     log.info("scheduler: queued %s run %d for %s (attempt %d)", kind, job_id, day, attempts + 1)
+    return job_id
+
+
+def _queue_backup(store: Store, config: Config, now: datetime) -> int | None:
+    """Queue the day's store snapshot once ``backup.time`` has passed, unless one was
+    already queued today (local day). A failed snapshot is not retried until tomorrow:
+    the health report flags it."""
+
+    hour, minute = (int(x) for x in config.backup.time.split(":"))
+    if now < now.replace(hour=hour, minute=minute, second=0, microsecond=0):
+        return None
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    if store.latest_job_of_type("backup", midnight.strftime("%Y-%m-%dT%H:%M:%SZ")):
+        return None
+    job_id = store.create_job("backup", {}, TRIGGER_SCHEDULE, utc_now_iso())
+    log.info("scheduler: queued backup %d", job_id)
     return job_id
 
 
@@ -733,6 +761,11 @@ class Worker(threading.Thread):
             if job["type"] == "run":
                 last = store.last_run()
                 run_id = last["id"] if last else None
+            # Queue a scheduled run's retry BEFORE marking it failed: the scheduler ticks
+            # on its own thread or process, and between the two it would otherwise see a
+            # failed run with nothing active and queue an immediate attempt of its own.
+            if job["type"] == "run" and job["trigger"] == TRIGGER_SCHEDULE and status == "failed":
+                self._queue_retry(store, config, job, params)
             store.finish_job(
                 job_id,
                 status,
@@ -744,29 +777,27 @@ class Worker(threading.Thread):
             )
             self.live_log = None
             self.current_job_id = None
-        if job["type"] == "run" and job["trigger"] == TRIGGER_SCHEDULE and status == "failed":
-            retries = config.schedule.retries
-            if job["attempt"] <= retries:
-                from datetime import UTC
 
-                delay = timedelta(minutes=config.schedule.retry_delay_minutes)
-                not_before = (datetime.now(UTC) + delay).strftime("%Y-%m-%dT%H:%M:%SZ")
-                store.create_job(
-                    "run",
-                    {**params, "attempt": job["attempt"] + 1},
-                    TRIGGER_SCHEDULE,
-                    utc_now_iso(),
-                    day=job["day"],
-                    priority=SCHEDULE_PRIORITY,
-                    not_before=not_before,
-                    attempt=job["attempt"] + 1,
-                )
-                log.warning(
-                    "run for %s failed; retry %d queued for %s",
-                    job["day"],
-                    job["attempt"] + 1,
-                    not_before,
-                )
+    def _queue_retry(self, store: Store, config: Config, job, params: dict) -> None:
+        if job["attempt"] > config.schedule.retries:
+            return
+        from datetime import UTC
+
+        delay = timedelta(minutes=config.schedule.retry_delay_minutes)
+        not_before = (datetime.now(UTC) + delay).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.create_job(
+            "run",
+            {**params, "attempt": job["attempt"] + 1},
+            TRIGGER_SCHEDULE,
+            utc_now_iso(),
+            day=job["day"],
+            priority=SCHEDULE_PRIORITY,
+            not_before=not_before,
+            attempt=job["attempt"] + 1,
+        )
+        log.warning(
+            "run for %s failed; retry %d queued for %s", job["day"], job["attempt"] + 1, not_before
+        )
 
 
 def worker_main(provider: ConfigProvider, once: bool = False, poll_seconds: float = 5.0) -> int:
@@ -806,6 +837,8 @@ def scheduler_main(provider: ConfigProvider, once: bool = False, tick_seconds: f
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     config = provider.get()
+    with Store(config.store_path):  # create or migrate the store before the first tick
+        pass
     log.info(
         "scheduler: slots %s in %s, %d retries %d min apart",
         config.schedule.slots,

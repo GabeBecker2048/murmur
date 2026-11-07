@@ -68,6 +68,15 @@ paused = false                  # true: the scheduler queues nothing (manual job
 retries = 3                     # extra attempts when a stage fails
 retry_delay_minutes = 20
 
+[backup]
+# The worker snapshots the store (SQLite online backup, integrity-checked) into
+# <data_dir>/backups every day at `time`; the murmur-backup service uploads each new
+# snapshot to S3 when MURMUR_S3_BUCKET is set in its environment (keys never live here).
+time = "04:30"                  # local time; empty = no scheduled snapshot
+keep = 3                        # snapshots kept on the data volume
+prefix = "murmur"               # S3 key prefix: <prefix>/store/murmur_<stamp>.sqlite.gz
+max_age_hours = 30              # the health report flags an older last upload
+
 [ui]
 title = "Murmur"
 tagline = "Does news predict prices, follow them, or move with them?"

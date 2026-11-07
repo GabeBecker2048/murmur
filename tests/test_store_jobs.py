@@ -308,3 +308,42 @@ def test_prune_rolling_tickers_keeps_recent_and_month_ends(store):
     assert {r["as_of"] for r in store.rolling_month_snapshot("2026-10")} == {"2026-10-06"}
     assert store.rolling_month_snapshot("2026-08") == []
     assert store.prune_rolling_tickers(keep_sessions=3) == 0  # idempotent
+
+
+def test_concurrent_first_opens_migrate_once(tmp_path):
+    """api, scheduler and worker may all open a brand-new store at the same moment."""
+    import threading
+
+    from murmur.store import SCHEMA_VERSION, Store
+
+    path = tmp_path / "murmur.sqlite"
+    errors = []
+
+    def open_it():
+        try:
+            with Store(path) as s:
+                assert s.schema_version == SCHEMA_VERSION
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=open_it) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+
+
+def test_scheduler_main_once_on_a_fresh_store(tmp_path):
+    from murmur import jobs
+    from murmur.config import ConfigProvider
+
+    ops = tmp_path / "murmur.toml"
+    ops.write_text(
+        f'data_dir = "{tmp_path / "data"}"\n'
+        '[universe]\nsource = "static"\n[universe.static]\nAAPL = "Apple"\n'
+        '[backup]\ntime = "00:00"\n'  # always passed: the tick queries the jobs table
+    )
+    provider = ConfigProvider(ops, env={})
+    assert jobs.scheduler_main(provider, once=True) == 0
+    assert provider.get().heartbeat_path.exists()

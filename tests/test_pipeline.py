@@ -503,10 +503,39 @@ def test_compose_has_one_worker_and_three_services():
     root = _p.Path(__file__).resolve().parents[1]
     compose = yaml.safe_load((root / "docker-compose.yml").read_text())
     services = compose["services"]
-    assert set(services) == {"murmur", "murmur-scheduler", "murmur-worker"}
+    assert set(services) == {"murmur", "murmur-scheduler", "murmur-worker", "murmur-backup"}
     commands = {name: " ".join(svc["command"]) for name, svc in services.items()}
     assert sum(1 for c in commands.values() if c.endswith("murmur worker")) == 1
     assert commands["murmur"] == "murmur serve --no-worker"
     assert commands["murmur-scheduler"] == "murmur scheduler"
     assert "8100:8100" in services["murmur"]["ports"] and "ports" not in services["murmur-worker"]
     assert services["murmur-worker"]["healthcheck"]["test"][-1] == "worker"
+    # only the backup service holds the S3 credentials, and it mounts the store read-only
+    backup = services["murmur-backup"]
+    assert commands["murmur-backup"] == "murmur offsite"
+    assert [e["path"] for e in backup["env_file"]] == ["s3.env"]
+    for name in ("murmur", "murmur-scheduler", "murmur-worker"):
+        assert all(e["path"] != "s3.env" for e in services[name]["env_file"])
+    mounts = {v["target"]: v for v in backup["volumes"]}
+    assert mounts["/data"]["read_only"] is True and not mounts["/data/offsite"].get("read_only")
+
+
+def test_cli_health_backup_role(cfg):
+    from murmur.jobs import write_heartbeat
+    from murmur.offsite import heartbeat_path
+
+    assert cli.main(["-c", str(cfg.source_path), "health", "--role", "backup"]) == 1
+    write_heartbeat(heartbeat_path(cfg))
+    assert cli.main(["-c", str(cfg.source_path), "health", "--role", "backup"]) == 0
+
+
+def test_json_log_format():
+    import json as _json
+    import logging
+
+    from murmur.logs import JsonFormatter
+
+    record = logging.LogRecord("murmur.x", logging.WARNING, "f", 1, "hello %s", ("world",), None)
+    out = _json.loads(JsonFormatter().format(record))
+    assert out["message"] == "hello world" and out["level"] == "WARNING"
+    assert out["logger"] == "murmur.x" and out["time"].endswith("+00:00")

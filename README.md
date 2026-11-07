@@ -204,6 +204,16 @@ also re-analyses the previous session, which only then has a tomorrow.
 `leadlag.png` in each day's folder plots the pooled Pearson by lag for the
 three matched pairs with confidence intervals.
 
+**The shuffle test.** A pooled correlation can come from market-wide days alone
+(good news on days the whole market rises). So each analysis also shuffles every
+session's day sentiment across that session's companies 200 times and recomputes
+the pooled r of day sentiment against the daily return, for each horizon and lag.
+The shuffles keep each day's numbers and destroy only which company they belong
+to. A real r above the shuffled range means the signal belongs to the right
+company on the right day. The overview shows it under the lead/lag chart; the
+results are the `placebo` table of the `correlations` dataset and
+`GET /api/v1/placebo`.
+
 ## Install
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -240,6 +250,7 @@ reverse proxy; the API enforces the token either way.
 
 ```
 GET  /api/v1/health, /status, /latest, /logs
+GET  /api/v1/health/report[?strict=true] problems + warnings for a watcher (503 with strict when not ok)
 GET  /api/v1/runs[/{id}]                 the daily run log
 GET  /api/v1/jobs[/{id}[/log?after=]]    the job queue; POST /api/v1/jobs {type, params, confirm}
 DELETE /api/v1/jobs/{id}                 cancel; POST /api/v1/scheduler/run-now|pause|resume
@@ -252,6 +263,7 @@ GET  /api/v1/days[/{date}[/articles]]    per-day cross-section
 GET  /api/v1/tickers[/{t}[/series|/articles|/leadlag]]
 GET  /api/v1/correlations                the daily correlations as a series
 GET  /api/v1/leadlag[/history]           the rolling results and their history
+GET  /api/v1/placebo[?as_of=]            the shuffle test as of a session
 GET  /api/v1/sources[/{s}/series]        source coverage and comparison
 GET  /api/v1/charts/leadlag.png          the one chart the API draws
 GET  /data/index.json, /data/<dataset>/YYYY/MM/DD/YYYYMMDD.<table>.parquet[?format=csv]
@@ -290,7 +302,8 @@ uv run murmur serve                    # the API + UI, plus the scheduler and th
 uv run murmur serve --no-worker        # the API + UI only (the server's `murmur` service)
 uv run murmur scheduler                # queues the daily run(s); --once ticks and exits
 uv run murmur worker                   # runs jobs, one at a time; --once drains the queue and exits
-uv run murmur health --role worker     # exit 0 if that process's heartbeat is fresh (api|scheduler|worker)
+uv run murmur offsite                  # the backup service: upload new snapshots to S3; --once
+uv run murmur health --role worker     # exit 0 if that process's heartbeat is fresh (api|scheduler|worker|backup)
 uv run murmur schedule                 # the pre-0.6.0 scheduler loop alone, no HTTP (fallback)
 uv run murmur -v run                   # debug logging
 ```
@@ -431,9 +444,10 @@ the image, pushes it to `ghcr.io/gabebecker2048/murmur` as `X.Y.Z` and
 requests and merges only build and smoke-test the image.
 
 The server pulls `latest` every morning, so a release is what deploys.
-`docker-compose.yml` runs three services from the one image, `murmur` (the API
-and UI, port 8100 on the LAN, 512 MB), `murmur-scheduler` (256 MB) and
-`murmur-worker` (2 GB, a 60 s stop grace period for a job in flight), and is
+`docker-compose.yml` runs four services from the one image, `murmur` (the API
+and UI, port 8100 on the LAN, 512 MB), `murmur-scheduler` (256 MB),
+`murmur-worker` (2 GB, a 60 s stop grace period for a job in flight) and
+`murmur-backup` (256 MB, see below), and is
 written for the server's conventions: a stack directory with `./data` (store,
 exports, API-written settings, heartbeats, Hugging Face cache) and
 `./config/murmur.toml` (ops overrides, may be empty, read-only), uid 1000,
@@ -442,7 +456,7 @@ source keys. Each service has its own health check; the scheduler and worker
 wait for the API to be healthy because it creates and migrates the store.
 
 ```bash
-mkdir -p ~/murmur/data ~/murmur/config && cd ~/murmur
+mkdir -p ~/murmur/data/offsite ~/murmur/config && cd ~/murmur
 touch config/murmur.toml                      # or set overrides
 curl -O https://raw.githubusercontent.com/GabeBecker2048/murmur/main/docker-compose.yml
 docker login ghcr.io -u <github user>            # once; the package is private
@@ -451,9 +465,43 @@ docker compose logs -f murmur-worker          # first job downloads FinBERT into
 docker compose exec murmur murmur runs        # the run log
 ```
 
-`deploy/murmur-backup.sh` snapshots the SQLite file with the online backup
-API (the DB is in WAL mode, so never `cp` it), checks integrity and keeps the
-newest 14 copies. The full offsite backup is 0.8.0.
+### Backups and monitoring
+
+Every day at `backup.time` (04:30) the scheduler queues a `backup` job: the
+worker copies the store with SQLite's online backup API (the DB is in WAL mode,
+so never `cp` it), checks its integrity and keeps `backup.keep` (3) snapshots in
+`data/backups`. The `murmur-backup` service (`murmur offsite`) uploads each new
+snapshot, gzipped with its SHA-256 in the object metadata, to
+`s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/`, plus `settings.toml`, and
+checks the size the bucket reports. It never opens the store: its data mount
+is read-only except `data/offsite` (status, heartbeat, staging). It is the only
+service that reads `s3.env`:
+
+```bash
+MURMUR_S3_BUCKET=...         # unset: the service idles and the report says "not configured"
+MURMUR_S3_REGION=us-east-2
+AWS_ACCESS_KEY_ID=...        # an IAM user allowed s3:PutObject, s3:GetObject (for the size
+AWS_SECRET_ACCESS_KEY=...    #   check) and s3:ListBucket on the prefix; nothing else
+# MURMUR_S3_ENDPOINT=...     # for an S3-compatible provider
+```
+
+Old copies are deleted by a lifecycle rule on the bucket (30 days), so the key
+cannot delete anything. The published tree is not uploaded: `murmur export
+--all` regenerates it from the store. To restore: download a snapshot,
+`gunzip`, check `sha256sum` against the object's `sha256` metadata, stop the
+stack, put it at `data/murmur.sqlite` (remove any `-wal`/`-shm`), start.
+`deploy/murmur-backup.sh` is the separate host-side snapshot (cron, 04:40, to
+the server's storage disk, 14 kept).
+
+`GET /api/v1/health/report` is one JSON document for a watcher: `problems`
+(a stale scheduler, worker or backup heartbeat, a daily run that has no success
+after its retries, a snapshot older than a day, an offsite copy older than
+`backup.max_age_hours`, under 5 GiB free) and `warnings` (failed or interrupted
+jobs in the last 24 h, the scheduler paused, offsite not configured).
+`deploy/murmur-check.sh` with its systemd timer runs on the host at 07:00 and
+20:15 Eastern and sends any problems through the homelab's `ntfy-send`; the
+containers hold no notification token. `MURMUR_LOG_FORMAT=json` makes the
+process log one JSON object per line.
 
 ## Contributing
 

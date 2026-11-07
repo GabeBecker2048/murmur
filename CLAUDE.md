@@ -55,6 +55,16 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
 - Settings: `config.write_settings` applies a TOML-shaped patch to `<data_dir>/settings.toml`
   (validate first, atomic replace); `LOCKED_KEYS` are refused; `ConfigProvider.get()` reloads
   when either file changes. Tests: `tests/test_api.py`, `test_jobs.py`, `test_settings.py`.
+- Backups (0.8.0): `tick()` also queues one `backup` job a day after `backup.time`
+  (`_queue_backup`, `store.latest_job_of_type`); the job writes `backups/*.sqlite.part`
+  and renames it. `src/murmur/offsite.py` is the murmur-backup service (`murmur offsite`):
+  never opens the Store (a test checks), env-only S3 (`S3Settings.from_env`), boto3 imported
+  inside `S3Target`, a `Target` protocol so tests use a fake, status + heartbeat in
+  `config.offsite_dir`. `api.routes.status.health_report()` is `/health/report`;
+  `deploy/murmur-check.sh` (host, ntfy-send) consumes it.
+- The shuffle test: `analysis.placebo_analysis` (after `rolling_analysis` in `run_analyze`,
+  `analyze_all` and per day in `analyze_range`), `shuffled_null` (vectorised within-session
+  permutations, seeded by the date), table `placebo` (v10), export table `placebo`.
 - Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.
 - The web UI (0.7.0) is `src/murmur/ui/static/`: plain ES modules, no build step, Plotly
   3.1.0 basic vendored under `vendor/` (MIT; version noted in `vendor/README.md`).
@@ -79,7 +89,7 @@ uv sync --all-groups                      # .venv with CPU-only torch (Linux) + 
 uv run murmur run [--date YYYY-MM-DD]     # universe -> news -> prices -> sentiment -> analyze -> export
 uv run murmur universe|news|prices|analyze|export  # one stage; universe --rebuild recomputes the month
 uv run murmur serve                       # API + UI (+ scheduler + worker in-process unless --no-worker)
-uv run murmur scheduler|worker [--once]   # the two other services; health --role api|scheduler|worker
+uv run murmur scheduler|worker|offsite [--once]   # the other services; health --role api|scheduler|worker|backup
 uv run murmur schedule                    # legacy scheduler loop, no HTTP, no jobs
 uv run murmur -v ...                      # debug logging; -c PATH for a config file
 uv run ruff check . && uv run ruff format --check .

@@ -34,6 +34,30 @@ Hardening. Four pull requests; released when the last one lands.
   used to be dropped).
 - `--once` on `murmur scheduler` (one tick) and `murmur worker` (drain the
   queue); the image smoke test runs both.
+- Offsite backup. The scheduler queues a `backup` job daily at `backup.time`
+  (04:30; `backup.keep` snapshots kept, default 3); snapshots are written as
+  `*.part` and renamed when integrity-checked. A fourth service,
+  `murmur-backup` (`murmur offsite`), uploads each new snapshot gzipped to
+  `s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/` with its SHA-256, checks the
+  stored size, and records the result in `data/offsite/status.json`. It is the
+  only service with the S3 keys (`s3.env`) and mounts the data volume
+  read-only except `data/offsite`. Unconfigured, it idles. `boto3` is a new
+  dependency, loaded only by this service.
+- `GET /api/v1/health/report` (`?strict=true` answers 503 when not ok):
+  problems (stale heartbeats, a daily run with no success after its retries, a
+  stale snapshot or offsite copy, low disk) and warnings (failed jobs in the
+  last 24 h, paused, offsite not configured). `deploy/murmur-check.sh` and its
+  systemd timer read it on the host twice a day and notify through `ntfy-send`.
+- The shuffle (placebo) test runs with every analysis: for each horizon and lag
+  of day sentiment vs the daily return, the real pooled r next to 200 shuffles
+  of each session's sentiment across its companies (`null_mean`, `null_sd`,
+  2.5/97.5 % range, `z`, permutation p). Stored in `placebo` (schema v10),
+  published as `correlations/.../YYYYMMDD.placebo.parquet`, served at
+  `GET /api/v1/placebo`, and summarised under the overview's lead/lag chart.
+- `MURMUR_LOG_FORMAT=json`: the process log as one JSON object per line.
+- `murmur health --role backup`; `/status` and `/health` report the backup
+  service's heartbeat and last upload. The image smoke test now also runs the
+  services with a read-only root filesystem.
 
 ### Fixed
 
@@ -41,6 +65,11 @@ Hardening. Four pull requests; released when the last one lands.
   (the one-year backfill, 2026-11-06) the daily run was not queued until the
   queue drained and the heartbeat went stale. The tick now runs on its own
   timer, in its own process on the server.
+- A failed scheduled run's retry is queued before the run is marked failed, so
+  a concurrent scheduler tick can no longer add an immediate extra attempt.
+- Store migrations are serialised by a lock file, so services opening a new or
+  older store at the same moment cannot apply a migration twice; the scheduler
+  creates or migrates the store when it starts.
 
 ## [0.7.2] - 2026-11-06
 

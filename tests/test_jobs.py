@@ -138,7 +138,8 @@ def test_validate_normalises_params():
         "to": "2026-10-31",
     }
     assert jobs.validate("delete_scores", {"model": "m"}, True)[0] == {"model": "m"}
-    assert jobs.validate("backup", {}, False)[0] == {"keep": 7}
+    assert jobs.validate("backup", {}, False)[0] == {}  # keep defaults to backup.keep
+    assert jobs.validate("backup", {"keep": 2}, False)[0] == {"keep": 2}
 
 
 def test_scheduler_tick_queues_the_daily_run_and_retries(provider, monkeypatch):
@@ -411,3 +412,61 @@ def test_vacuum_job_reclaims_space(provider):
         out = jobs.HANDLERS["vacuum"](s, cfg, {})
     assert out["bytes_before"] == before and out["bytes_after"] < before
     assert out["freed"] > 1_000_000 and (cfg.data_dir / "tmp").is_dir()
+
+
+def test_tick_queues_one_backup_a_day_after_backup_time(provider):
+    cfg = provider.get()
+    assert cfg.backup.time == "04:30"
+    with Store(cfg.store_path) as s:
+        assert jobs.tick(provider, datetime(2026, 11, 7, 4, 29, tzinfo=ET)) == []
+    queued = jobs.tick(provider, datetime(2026, 11, 7, 4, 31, tzinfo=ET))
+    with Store(cfg.store_path) as s:
+        types = [s.job(j)["type"] for j in queued]
+        assert "backup" in types
+        assert jobs.tick(provider, datetime(2026, 11, 7, 9, 0, tzinfo=ET)) == []
+
+
+def test_backup_job_writes_finished_snapshots_and_keeps_n(provider):
+    cfg = provider.get()
+    with Store(cfg.store_path) as s:
+        for i in range(3):
+            out = jobs.HANDLERS["backup"](s, cfg, {"keep": 2} if i else {})
+            import time as _t
+
+            _t.sleep(1.1)  # snapshot names are per second
+    files = sorted(p.name for p in cfg.backups_dir.iterdir())
+    assert len(files) == 2 and all(f.endswith(".sqlite") for f in files)
+    assert out["kept"] == 2
+
+
+def test_retry_is_queued_before_the_failed_run_is_finished(provider, monkeypatch):
+    """The scheduler ticks concurrently: it must never see a failed scheduled run with
+    nothing active, or it queues an immediate extra attempt (seen once in CI)."""
+    cfg = provider.get()
+    monkeypatch.setitem(jobs.HANDLERS, "run", lambda *a: (_ for _ in ()).throw(RuntimeError("x")))
+    seen = []
+    original = Store.finish_job
+
+    def spy(self, job_id, status, *a, **kw):
+        if status == "failed":
+            seen.append([r["status"] for r in self.run_jobs_for_day("2026-11-05")])
+        return original(self, job_id, status, *a, **kw)
+
+    monkeypatch.setattr(Store, "finish_job", spy)
+    with Store(cfg.store_path) as s:
+        s.create_job(
+            "run",
+            {"date": "2026-11-05", "trigger": "schedule", "attempt": 1},
+            "schedule",
+            "2020-01-01T00:00:00Z",
+            day="2026-11-05",
+        )
+    worker = jobs.Worker(provider, scheduler=False, poll_seconds=0.05)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        worker.stop()
+    assert seen and seen[0] == ["running", "queued"]  # the retry existed while attempt 1 still ran

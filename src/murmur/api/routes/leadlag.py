@@ -68,3 +68,22 @@ def leadlag_history(
         }
     )
     return {"items": [dict(r) for r in rows], "total": len(rows)}
+
+
+@router.get("/placebo")
+def placebo(store: Store = Depends(get_store), as_of: str | None = None):
+    """The shuffle test as of a day (default: the latest): for each horizon and lag of
+    day sentiment vs the daily return, the real pooled r and the distribution of r
+    when each session's sentiment is shuffled across companies (``null_*``), with
+    ``z`` and the permutation p-value."""
+    if as_of:
+        try:
+            as_of = parse_date(as_of).isoformat()
+        except ValueError:
+            raise HTTPException(422, "as_of must be YYYY-MM-DD") from None
+    else:
+        as_of = store.latest_placebo_as_of()
+        if not as_of:
+            raise HTTPException(404, "no placebo results yet")
+    rows = store.placebo_on(as_of)
+    return {"as_of": as_of, "items": [dict(r) for r in rows], "total": len(rows)}

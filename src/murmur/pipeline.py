@@ -13,7 +13,13 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from murmur import jobs as jobctl
-from murmur.analysis import DayResult, analyze_day, returns_available, rolling_analysis
+from murmur.analysis import (
+    DayResult,
+    analyze_day,
+    placebo_analysis,
+    returns_available,
+    rolling_analysis,
+)
 from murmur.clock import is_trading_day, previous_session, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
@@ -334,7 +340,10 @@ def run_analyze(store: Store, config: Config, day: date) -> AnalyzeResult:
                 members, _ = membership_for(store, config, d)
                 analyze_day(store, config, d, [m.ticker for m in members])
                 reanalyzed.append(d)
-    rolling_rows = len(rolling_analysis(store, config, day, tickers)) if today.trading_day else 0
+    rolling_rows = 0
+    if today.trading_day:
+        rolling_rows = len(rolling_analysis(store, config, day, tickers))
+        placebo_analysis(store, config, day, tickers)
     return AnalyzeResult(today, backfilled, reanalyzed, rolling_rows)
 
 
@@ -347,7 +356,9 @@ def analyze_all(store: Store, config: Config) -> list[date]:
         members, _ = membership_for(store, config, d)
         analyze_day(store, config, d, [m.ticker for m in members])
     if days:
-        rolling_analysis(store, config, days[-1], universe_tickers(store, days[-1]))
+        tickers = universe_tickers(store, days[-1])
+        rolling_analysis(store, config, days[-1], tickers)
+        placebo_analysis(store, config, days[-1], tickers)
     return days
 
 
@@ -366,6 +377,9 @@ def analyze_range(store: Store, config: Config, start: date, end: date) -> list[
         analyze_day(store, config, d, tickers)
         if d >= start:
             rolling_analysis(store, config, d, tickers)
+            # the shuffle test is ~1 s a day: run it for every day of a backfill too, so
+            # its history is complete
+            placebo_analysis(store, config, d, tickers)
     return days
 
 

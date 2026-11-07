@@ -384,3 +384,35 @@ def test_rolling_analysis_prunes_old_per_ticker_rows(store, cfg, tmp_path):
     assert len(pooled) == 4  # pooled history complete
     # the two latest sessions always; an older one only if it is its month's last session
     assert pooled[-2:] == as_ofs[-2:] and len(as_ofs) <= 3
+
+
+def test_placebo_separates_the_planted_signal_from_shuffles(store, cfg):
+    from murmur.analysis import placebo_analysis
+    from murmur.clock import sessions_between
+
+    days = sessions_between(date(2026, 8, 1), date(2026, 11, 5))
+    seed_series(store, days, lead=1)
+    tickers = ["AAPL", "MSFT", "GOOGL", "META"]
+    rows = placebo_analysis(store, cfg, date(2026, 11, 5), tickers)
+    by = {(r.months, r.lag): r for r in rows}
+    assert {r.window for r in rows} == {DAY} and {r.return_type for r in rows} == {"daily"}
+    planted = by[(3, 1)]
+    assert planted.real_r == pytest.approx(1.0)
+    assert planted.null_high < 0.9 and planted.z > 5 and planted.p_perm == pytest.approx(1 / 201)
+    assert abs(by[(3, 0)].z) < 4  # no signal planted at lag 0
+    again = placebo_analysis(store, cfg, date(2026, 11, 5), tickers)
+    assert [r.null_mean for r in again] == [r.null_mean for r in rows]  # seeded by the date
+    assert len(store.placebo_on("2026-11-05")) == len(rows)
+
+
+def test_shuffled_null_stays_within_sessions():
+    import numpy as np
+
+    from murmur.analysis import shuffled_null
+
+    rng = np.random.default_rng(0)
+    # one company per session: every shuffle is the identity, so the null equals the real r
+    x = rng.normal(size=50)
+    y = x + rng.normal(size=50)
+    null = shuffled_null(x, y, np.arange(50), 20, rng)
+    assert np.allclose(null, np.corrcoef(x, y)[0, 1])

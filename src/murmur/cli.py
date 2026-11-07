@@ -68,15 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--once", action="store_true", help="drain the queue, then exit")
     sch = add("scheduler", "the scheduler process: queues the daily run(s)", dated=False)
     sch.add_argument("--once", action="store_true", help="one tick, then exit")
+    off = add("offsite", "the backup service: upload new store snapshots to S3", dated=False)
+    off.add_argument("--once", action="store_true", help="one pass, then exit")
     add("schedule", "(legacy) the pre-0.6.0 scheduler loop, no HTTP, no jobs", dated=False)
     r = add("runs", "list recent runs", dated=False)
     r.add_argument("--limit", type=int, default=20)
     h = add("health", "exit 0 if the running service reports healthy", dated=False)
     h.add_argument(
         "--role",
-        choices=("api", "scheduler", "worker"),
+        choices=("api", "scheduler", "worker", "backup"),
         default="api",
-        help="api = GET /api/v1/health; scheduler/worker = that process's heartbeat file age",
+        help="api = GET /api/v1/health; the others = that process's heartbeat file age",
     )
     h.add_argument("--file", action="store_true", help="alias for --role scheduler")
     return parser
@@ -84,11 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    from murmur.logs import configure as configure_logging
+
+    configure_logging(args.verbose)
     for noisy in (
         "urllib3",
         "httpx",
@@ -111,9 +111,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "health":
         role = "scheduler" if args.file else args.role
         if role != "api":
+            from murmur.offsite import heartbeat_path as offsite_heartbeat
             from murmur.scheduler import heartbeat_age_seconds
 
-            path = config.heartbeat_path if role == "scheduler" else config.worker_heartbeat_path
+            path = {
+                "scheduler": config.heartbeat_path,
+                "worker": config.worker_heartbeat_path,
+                "backup": offsite_heartbeat(config),
+            }[role]
             age = heartbeat_age_seconds(config, path)
             fresh = age is not None and age < HEALTH_MAX_AGE
             if age is None:
@@ -134,6 +139,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         from murmur.jobs import scheduler_main
 
         return scheduler_main(ConfigProvider(args.config), once=args.once)
+    if args.command == "offsite":
+        from murmur.config import ConfigProvider
+        from murmur.offsite import offsite_main
+
+        return offsite_main(ConfigProvider(args.config), once=args.once)
     if args.command == "schedule":
         from murmur.scheduler import serve
 

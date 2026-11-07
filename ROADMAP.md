@@ -202,7 +202,8 @@ Four pull requests, one release (decided 2026-11-07).
 - Four services from one image: API, scheduler (the tick, independent of a
   busy worker), worker (the only FinBERT process), backup (the only holder of
   the S3 credentials, data mounted read-only). Exactly one worker.
-- Nightly offsite backup to S3 of the newest snapshot and the published tree.
+- Nightly offsite backup to S3 of the newest snapshot (the published tree is
+  regenerated from the store with `export --all`, so it is not uploaded).
 - A health report endpoint (last run per kind, failed jobs, worker heartbeat,
   disk, offsite age), a host-side check that notifies through `ntfy-send`,
   JSON logs as an option, the placebo (within-day shuffle) test built into the

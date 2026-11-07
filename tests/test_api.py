@@ -500,3 +500,87 @@ def test_status_reports_services_in_split_mode(client, provider):
     assert st["worker"]["alive"] is True and st["worker"]["scheduler"] is True
     h = client.get("/api/v1/health").json()
     assert h["ok"] and h["services"]["worker"]["heartbeat_age"] < 5
+
+
+def test_health_report_flags_problems(client, provider):
+    from murmur.jobs import write_heartbeat
+
+    body = client.get("/api/v1/health/report").json()
+    assert body["ok"] is False
+    assert any("worker heartbeat missing" in p for p in body["problems"])
+    assert any("scheduler heartbeat missing" in p for p in body["problems"])
+    assert any("offsite backup is not configured" in w for w in body["warnings"])
+    assert client.get("/api/v1/health/report?strict=true").status_code == 503
+    cfg = provider.get()
+    write_heartbeat(cfg.worker_heartbeat_path)
+    write_heartbeat(cfg.heartbeat_path)
+    body = client.get("/api/v1/health/report").json()
+    assert not any("heartbeat" in p for p in body["problems"])
+    assert {d["kind"] for d in body["daily"]} == {"full"}
+
+
+def test_health_report_ok_when_everything_is_fresh(provider):
+    from datetime import UTC, datetime
+
+    from murmur.api.routes.status import health_report
+    from murmur.jobs import write_heartbeat
+    from murmur.offsite import _write_status
+
+    cfg = provider.get()
+    write_heartbeat(cfg.worker_heartbeat_path)
+    write_heartbeat(cfg.heartbeat_path)
+    cfg.backups_dir.mkdir(parents=True)
+    (cfg.backups_dir / "murmur_2026-11-07_043000.sqlite").write_bytes(b"x")
+    now = datetime.now(UTC)
+    _write_status(cfg, {"configured": True, "last_success": now.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    from murmur.offsite import heartbeat_path
+
+    write_heartbeat(heartbeat_path(cfg))
+    with Store(cfg.store_path) as s:
+        # the 18:00 slot of "yesterday or today" has a successful run
+        report = health_report(s, cfg, None)
+        day = report["daily"][0]["date"]
+        rid = s.start_run(day, "schedule", 1, "t", kind="full")
+        s.finish_run(rid, "t", True, "{}")
+        report = health_report(s, cfg, None)
+    assert report["ok"], report["problems"]
+    # a configured backup service that stopped is a problem
+    heartbeat_path(cfg).unlink()
+    with Store(cfg.store_path) as s:
+        assert "backup heartbeat missing" in health_report(s, cfg, None)["problems"]
+    write_heartbeat(heartbeat_path(cfg))
+    # the offsite copy going stale is a problem
+    _write_status(cfg, {"configured": True, "last_success": "2026-01-01T00:00:00Z"})
+    with Store(cfg.store_path) as s:
+        report = health_report(s, cfg, None)
+    assert any("last offsite backup" in p for p in report["problems"])
+
+
+def test_placebo_route(client, provider):
+    assert client.get("/api/v1/placebo").status_code == 404
+    with Store(provider.get().store_path) as s:
+        s.replace_placebo(
+            "2026-11-05",
+            [
+                (
+                    12,
+                    "day",
+                    "daily",
+                    0,
+                    "all",
+                    22366,
+                    0.164,
+                    0.02,
+                    0.006,
+                    0.008,
+                    0.032,
+                    24.0,
+                    0.005,
+                    200,
+                    "t",
+                )
+            ],
+        )
+    body = client.get("/api/v1/placebo").json()
+    assert body["as_of"] == "2026-11-05" and body["items"][0]["z"] == 24.0
+    assert client.get("/api/v1/placebo?as_of=nope").status_code == 422
