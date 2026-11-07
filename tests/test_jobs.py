@@ -316,3 +316,16 @@ def test_backfill_validation():
     assert clean == {"date": "2026-11-05", "kind": "analyze"}
     with pytest.raises(jobs.JobError, match="kind"):
         jobs.validate("run", {"kind": "nope"}, False)
+
+
+def test_vacuum_job_reclaims_space(provider):
+    cfg = provider.get()
+    with Store(cfg.store_path) as s:
+        s.conn.execute("CREATE TABLE junk (x BLOB)")
+        s.conn.executemany("INSERT INTO junk VALUES (?)", [(b"x" * 100_000,) for _ in range(50)])
+        s.conn.execute("DROP TABLE junk")
+        s.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        before = cfg.store_path.stat().st_size
+        out = jobs.HANDLERS["vacuum"](s, cfg, {})
+    assert out["bytes_before"] == before and out["bytes_after"] < before
+    assert out["freed"] > 1_000_000 and (cfg.data_dir / "tmp").is_dir()

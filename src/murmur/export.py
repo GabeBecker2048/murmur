@@ -53,6 +53,12 @@ class Table:
     key: tuple[str, ...]
     query: Callable[[Store, Config, str], list[tuple]]
     """``(store, config, day_iso | month)`` -> rows in ``columns`` order."""
+    cadence: str | None = None
+    """Overrides the dataset's cadence (a monthly table inside a daily dataset)."""
+
+
+def table_cadence(ds: Dataset, table: Table) -> str:
+    return table.cadence or ds.cadence
 
 
 @dataclass(frozen=True)
@@ -151,16 +157,22 @@ def q_daily(store: Store, config: Config, iso: str) -> list[tuple]:
 
 
 def q_rolling(store: Store, config: Config, iso: str) -> list[tuple]:
+    """Pooled rolling results only; per-company rows are the monthly snapshot table."""
+    return [
+        tuple(r[c] for c in ROLLING_COLUMNS)
+        for r in store.rolling_on(iso)
+        if r["scope"] == "pooled"
+    ]
+
+
+def q_rolling_tickers(store: Store, config: Config, month: str) -> list[tuple]:
+    """Per-company rolling results as of the month's last session (end-of-month snapshot;
+    for the current month, the latest session so far, rewritten daily)."""
     cik_of = store.ticker_ciks()
-    out = []
-    for r in store.rolling_on(iso):
-        out.append(
-            tuple(
-                (cik_of.get(r["ticker"]) if r["ticker"] else None) if c == "cik" else r[c]
-                for c in ROLLING_COLUMNS
-            )
-        )
-    return out
+    return [
+        tuple(cik_of.get(r["ticker"]) if c == "cik" else r[c] for c in ROLLING_TICKERS_COLUMNS)
+        for r in store.rolling_month_snapshot(month)
+    ]
 
 
 COMPANIES_COLUMNS = (
@@ -253,17 +265,7 @@ DAILY_COLUMNS = (
     "tickers",
     "computed_at",
 )
-ROLLING_KEY = (
-    "as_of",
-    "months",
-    "window",
-    "return_type",
-    "lag",
-    "source",
-    "scope",
-    "ticker",
-    "method",
-)
+ROLLING_KEY = ("as_of", "months", "window", "return_type", "lag", "source", "method")
 ROLLING_COLUMNS = (
     "as_of",
     "months",
@@ -271,7 +273,31 @@ ROLLING_COLUMNS = (
     "return_type",
     "lag",
     "source",
-    "scope",
+    "method",
+    "n",
+    "estimate",
+    "p_value",
+    "ci_low",
+    "ci_high",
+    "computed_at",
+)
+ROLLING_TICKERS_KEY = (
+    "as_of",
+    "months",
+    "window",
+    "return_type",
+    "lag",
+    "source",
+    "ticker",
+    "method",
+)
+ROLLING_TICKERS_COLUMNS = (
+    "as_of",
+    "months",
+    "window",
+    "return_type",
+    "lag",
+    "source",
     "cik",
     "ticker",
     "method",
@@ -362,8 +388,9 @@ def datasets(config: Config) -> list[Dataset]:
             "Correlations",
             "Does news lead or follow prices? `daily`: each trading day's cross-sectional "
             "correlation of window sentiment with each return type at lags -1, 0 and +1, "
-            "pooled and per source. `rolling`: the same over 1, 3, 6 and 12 months, pooled "
-            "and per company. The PNG charts are drawn from these tables.",
+            "pooled and per source. `rolling`: the same over 1, 3, 6 and 12 months, pooled, "
+            "as of every session. `rolling_tickers`: the per-company rolling results as of "
+            "each month's last session (monthly). The PNG charts are drawn from these tables.",
             DAILY,
             (
                 Table(
@@ -372,21 +399,13 @@ def datasets(config: Config) -> list[Dataset]:
                     ("date", "window", "return_type", "lag", "scope", "source", "method", "model"),
                     q_daily,
                 ),
+                Table("rolling", ROLLING_COLUMNS, ROLLING_KEY, q_rolling),
                 Table(
-                    "rolling",
-                    ROLLING_COLUMNS,
-                    (
-                        "as_of",
-                        "months",
-                        "window",
-                        "return_type",
-                        "lag",
-                        "source",
-                        "scope",
-                        "ticker",
-                        "method",
-                    ),
-                    q_rolling,
+                    "rolling_tickers",
+                    ROLLING_TICKERS_COLUMNS,
+                    ROLLING_TICKERS_KEY,
+                    q_rolling_tickers,
+                    cadence=MONTHLY,
                 ),
             ),
             CC_BY,
@@ -508,13 +527,14 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
 
 
 def export_month(store: Store, config: Config, month: str) -> list[Path]:
-    """Write the monthly datasets (companies, the index) for ``month``."""
+    """Write every monthly table (companies, the index, the per-company rolling snapshot)
+    for ``month``."""
     base = config.published_dir
     written: list[Path] = []
     for ds in datasets(config):
-        if ds.cadence != MONTHLY:
-            continue
         for table in ds.tables:
+            if table_cadence(ds, table) != MONTHLY:
+                continue
             rows = table.query(store, config, month)
             _write_or_remove(
                 month_path(base, ds.name, month, table.name),
@@ -622,6 +642,8 @@ def compact_finished_months(base: Path, config: Config, current_month: str) -> l
             if month >= current_month or not any(p.is_dir() for p in mdir.iterdir()):
                 continue
             for table in ds.tables:
+                if table_cadence(ds, table) != DAILY:
+                    continue
                 out = compact_month(base, ds, table, month)
                 if out:
                     written.append(out)
@@ -732,7 +754,14 @@ def manifest(base: Path, config: Config) -> dict:
             "title": ds.title,
             "description": ds.description,
             "cadence": ds.cadence,
-            "tables": {t.name: {"columns": list(t.columns), "key": list(t.key)} for t in ds.tables},
+            "tables": {
+                t.name: {
+                    "columns": list(t.columns),
+                    "key": list(t.key),
+                    "cadence": table_cadence(ds, t),
+                }
+                for t in ds.tables
+            },
             "license": ds.license,
             "public": ds.name not in config.datasets.private,
             "file_count": len(files),

@@ -7,7 +7,10 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.6.0, pre-public.** One process serves an HTTP API, runs the daily
+**Status: 0.8.0 in progress (hardening), pre-public.** See `ROADMAP.md`; 0.9.0 is the
+UI polish release. The 0.6.0 notes below still describe the running shape.
+
+**0.6.0.** One process serves an HTTP API, runs the daily
 job and executes queued work: `/api/v1` answers queries about days, tickers,
 sources and the lead/lag results, runs and cancels jobs (runs, backfills,
 rebuilds, deletions), and edits settings; `/data` serves the published Parquet
@@ -359,7 +362,8 @@ prices/2026/11/05/20261105.prices.parquet         OHLCV bar plus prev_close, ove
 news/2026/11/05/20261105.articles.parquet         one row per headline x company, sources, window, FinBERT scores
 sentiment/2026/11/05/20261105.sentiment.parquet   per company x window x source: headline count, mean score
 correlations/2026/11/05/20261105.daily.parquet    the day's correlations (window x return x lag x source)
-correlations/2026/11/05/20261105.rolling.parquet  1/3/6/12-month results as of the day, pooled and per company
+correlations/2026/11/05/20261105.rolling.parquet  1/3/6/12-month pooled results as of the day
+correlations/2026/11/202611.rolling_tickers.parquet  per-company rolling results as of the month's last session
 correlations/2026/11/05/20261105.leadlag.png      + sentiment.png, correlation.png
 prices/2026/10/202610.prices.parquet              a finished month, compacted into one file per table
 ```

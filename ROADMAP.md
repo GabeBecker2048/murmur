@@ -193,10 +193,33 @@ Three pull requests, one release.
 
 ## 0.8.0 - hardening
 
-- Nightly offsite backup of the data volume (Backblaze B2 or S3).
-- Health endpoint, structured logs, read-only container with the data volume
-  as the only writable path.
-- A `docs/` folder: configuration, API reference, data dictionary.
+Four pull requests, one release (decided 2026-11-07).
+
+- Rolling results pruned: pooled history forever, per-company rows for the
+  latest 30 sessions plus each month's last session; the daily `rolling` file
+  is pooled only and a monthly `rolling_tickers` snapshot carries the
+  per-company results. A `vacuum` job reclaims the space.
+- Four services from one image: API, scheduler (the tick, independent of a
+  busy worker), worker (the only FinBERT process), backup (the only holder of
+  the S3 credentials, data mounted read-only). Exactly one worker.
+- Nightly offsite backup to S3 of the newest snapshot and the published tree.
+- A health report endpoint (last run per kind, failed jobs, worker heartbeat,
+  disk, offsite age), a host-side check that notifies through `ntfy-send`,
+  JSON logs as an option, the placebo (within-day shuffle) test built into the
+  analysis and shown on the overview.
+- The daily Murmur 100 level (divisor method, base 1000 on 2025-11-03) with
+  per-constituent contributions, charted on the index page.
+- A generated `docs/` folder: configuration, API reference, data dictionary,
+  checked in CI. The read-only container verified in CI.
+
+## 0.9.0 - the UI, properly
+
+- A design pass over the dashboard: typography, spacing, colour, the chart
+  styling, an overview that reads as a report rather than a status page.
+- Explorer interactions: linked charts, shareable URLs for every view, a
+  company comparison view, source comparison charts.
+- The admin area: job timeline, settings diff and history, a backfill planner
+  that estimates duration.
 
 ## 1.0.0 - public release
 

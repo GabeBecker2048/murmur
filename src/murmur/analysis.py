@@ -450,7 +450,8 @@ def rolling_analysis(
             for r in rows
         ),
     )
-    log.info("rolling as of %s: %d rows", as_of, len(rows))
+    pruned = store.prune_rolling_tickers(config.analysis.keep_ticker_rolling_sessions)
+    log.info("rolling as of %s: %d rows (%d old per-ticker rows pruned)", as_of, len(rows), pruned)
     return rows
 
 
