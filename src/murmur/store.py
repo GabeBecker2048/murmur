@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -291,6 +291,30 @@ MIGRATIONS: dict[int, str] = {
     9: """
     -- 0.7.1: how a month's caps were obtained (live screener | reconstructed | static).
     ALTER TABLE universe_months ADD COLUMN method TEXT NOT NULL DEFAULT 'live';
+    """,
+    10: """
+    -- 0.8.0: the shuffle (placebo) test, as of each session. The real pooled Pearson r
+    -- next to the distribution of r when each session's sentiment is shuffled across
+    -- companies: does the signal belong to the right company on the right day?
+    CREATE TABLE placebo (
+        as_of        TEXT NOT NULL,
+        months       INTEGER NOT NULL,
+        window       TEXT NOT NULL,
+        return_type  TEXT NOT NULL,
+        lag          INTEGER NOT NULL,
+        source       TEXT NOT NULL,
+        n            INTEGER NOT NULL,
+        real_r       REAL NOT NULL,
+        null_mean    REAL NOT NULL,
+        null_sd      REAL NOT NULL,
+        null_low     REAL NOT NULL,
+        null_high    REAL NOT NULL,
+        z            REAL,
+        p_perm       REAL NOT NULL,
+        permutations INTEGER NOT NULL,
+        computed_at  TEXT NOT NULL,
+        PRIMARY KEY (as_of, months, window, return_type, lag, source)
+    );
     """,
 }
 
@@ -974,12 +998,54 @@ class Store:
             )
         return len(rows)
 
+    PLACEBO_COLUMNS = (
+        "as_of",
+        "months",
+        "window",
+        "return_type",
+        "lag",
+        "source",
+        "n",
+        "real_r",
+        "null_mean",
+        "null_sd",
+        "null_low",
+        "null_high",
+        "z",
+        "p_perm",
+        "permutations",
+        "computed_at",
+    )
+
+    def replace_placebo(self, as_of: str, rows: Iterable[tuple]) -> int:
+        """Replace the placebo rows for ``as_of``; each row is ``PLACEBO_COLUMNS[1:]``."""
+        rows = list(rows)
+        cols = ", ".join(self.PLACEBO_COLUMNS)
+        marks = ", ".join("?" * len(self.PLACEBO_COLUMNS))
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("DELETE FROM placebo WHERE as_of = ?", (as_of,))
+            self.conn.executemany(
+                f"INSERT INTO placebo ({cols}) VALUES ({marks})", [(as_of, *r) for r in rows]
+            )
+        return len(rows)
+
+    def placebo_on(self, as_of: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            f"""SELECT {", ".join(self.PLACEBO_COLUMNS)} FROM placebo WHERE as_of = ?
+                ORDER BY months, window, return_type, lag, source""",
+            (as_of,),
+        ).fetchall()
+
+    def latest_placebo_as_of(self) -> str | None:
+        return self.conn.execute("SELECT max(as_of) FROM placebo").fetchone()[0]
+
     def prune_rolling_tickers(self, keep_sessions: int) -> int:
         """Delete per-ticker rolling rows older than the ``keep_sessions`` most recent
         sessions, except each month's last session (kept forever for the monthly
         snapshot files). Pooled rows are never touched. Returns rows deleted."""
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             cutoff = self.conn.execute(
                 """SELECT min(as_of) FROM (
                      SELECT DISTINCT as_of FROM rolling_correlations
@@ -1276,6 +1342,21 @@ class Store:
                 (now, before),
             )
         return rows
+
+    def jobs_finished_since(self, since: str, statuses: tuple[str, ...]) -> list[sqlite3.Row]:
+        marks = ",".join("?" * len(statuses))
+        return self.conn.execute(
+            f"""SELECT id, type, params, trigger, status, error, finished_at FROM jobs
+                WHERE finished_at >= ? AND status IN ({marks}) ORDER BY id""",
+            (since, *statuses),
+        ).fetchall()
+
+    def latest_job_of_type(self, type_: str, since: str) -> sqlite3.Row | None:
+        """The newest job of ``type_`` created at or after ``since`` (UTC ISO)."""
+        return self.conn.execute(
+            "SELECT * FROM jobs WHERE type = ? AND created_at >= ? ORDER BY id DESC LIMIT 1",
+            (type_, since),
+        ).fetchone()
 
     def running_job(self) -> sqlite3.Row | None:
         return self.conn.execute(

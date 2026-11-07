@@ -10,10 +10,11 @@ export async function render(main, parts, query) {
   const months = Number(query.get("months") || ui.default_months || 3);
   const method = query.get("method") || ui.default_method || "pearson";
 
-  const [latest, leadlag, days] = await Promise.all([
+  const [latest, leadlag, days, placebo] = await Promise.all([
     api("latest"),
     api(`leadlag${qs({ months, method, source: "all", scope: "pooled" })}`),
     api(`days${qs({ from: daysAgo(30) })}`),
+    api("placebo").catch(() => null), // 404 until the first analysis with 0.8.0
   ]);
 
   const head = el(
@@ -62,6 +63,7 @@ export async function render(main, parts, query) {
           "Lag −1 correlates a session's news with the previous session's return, +1 with the next. ",
         link(`/leadlag${qs({ months, method })}`, "Explore every window, source and horizon →"),
       ),
+      shuffleNote(placebo, months),
     ),
     { sub: headline ? `Headline today: ${fmt.r(headline.estimate)} (n ${headline.n})` : undefined },
   );
@@ -119,4 +121,25 @@ export async function render(main, parts, query) {
       });
     })
     .catch(() => histNode.replaceWith(el("div", { class: "empty", text: "History unavailable." })));
+}
+
+// The shuffle (placebo) test for the selected horizon, lag 0: is the correlation tied to
+// the right company on the right day, or would any pairing of that day's numbers do?
+function shuffleNote(placebo, months) {
+  const row = (placebo?.items || []).find((x) => x.months === months && x.lag === 0);
+  if (!row) return null;
+  const real = el("strong", { text: fmt.r(row.real_r) });
+  const z = row.z === null ? "" : `, z = ${row.z.toFixed(1)}`;
+  return el(
+    "p",
+    { class: "chart-note", "data-test": "shuffle-note" },
+    "Shuffle test, lag 0: the real r is ",
+    real,
+    `; with each session's headlines shuffled across companies ${row.permutations} times it is ` +
+      `${fmt.r(row.null_mean)} ± ${row.null_sd.toFixed(3)} (95 % of shuffles between ` +
+      `${fmt.r(row.null_low)} and ${fmt.r(row.null_high)}${z}). ` +
+      (row.real_r > row.null_high || row.real_r < row.null_low
+        ? "The signal belongs to the right company on the right day."
+        : "Not distinguishable from shuffled pairings at this horizon."),
+  );
 }

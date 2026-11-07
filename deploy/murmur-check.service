@@ -1,0 +1,6 @@
+[Unit]
+Description=Murmur health report check (notifies through ntfy-send)
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/murmur-check.sh

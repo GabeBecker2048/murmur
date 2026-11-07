@@ -39,6 +39,14 @@ jobs:
           docker run --rm murmur:ci murmur scheduler --once
           docker run --rm murmur:ci murmur worker --once
           docker run --rm murmur:ci sh -c 'murmur scheduler --once && murmur health --role scheduler'
+          docker run --rm murmur:ci sh -c 'murmur offsite --once && murmur health --role backup'
+          docker run --rm murmur:ci python -c "import boto3, murmur.offsite; print('boto3 ok')"
+          curl -fsS http://127.0.0.1:8100/api/v1/health/report | head -c 300; echo
+          # read-only root filesystem, as in docker-compose.yml: everything writes under /data
+          mkdir -p ci-data && chmod 777 ci-data
+          docker run --rm --read-only --tmpfs /tmp -v "$PWD/ci-data:/data" murmur:ci \
+            sh -c 'murmur scheduler --once && murmur worker --once && murmur offsite --once'
+          ls ci-data
           curl -fsS -o /dev/null http://127.0.0.1:8100/static/vendor/plotly-basic.min.js
           docker exec smoke murmur health
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8100/api/v1/jobs -H 'content-type: application/json' -d '{"type":"export"}')" = "503"

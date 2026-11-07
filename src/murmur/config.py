@@ -146,6 +146,18 @@ def _hm(text: str) -> tuple[int, int]:
 
 
 @dataclass(frozen=True)
+class BackupConfig:
+    time: str
+    """Daily snapshot slot (HH:MM), or empty for none."""
+    keep: int
+    """Snapshots kept in ``<data_dir>/backups``."""
+    prefix: str
+    """S3 key prefix for the offsite copies."""
+    max_age_hours: int
+    """The health report flags the offsite copy as stale after this long."""
+
+
+@dataclass(frozen=True)
 class UiConfig:
     title: str
     tagline: str
@@ -185,6 +197,7 @@ class Config:
     universe: UniverseConfig
     index: IndexConfig
     schedule: ScheduleConfig
+    backup: BackupConfig
     api: ApiConfig
     ui: UiConfig
     datasets: DatasetsConfig
@@ -211,6 +224,16 @@ class Config:
     @property
     def worker_heartbeat_path(self) -> Path:
         return self.data_dir / "worker.heartbeat"
+
+    @property
+    def backups_dir(self) -> Path:
+        """Store snapshots written by the ``backup`` job."""
+        return self.data_dir / "backups"
+
+    @property
+    def offsite_dir(self) -> Path:
+        """The backup service's own writable directory: status, heartbeat, staging."""
+        return self.data_dir / "offsite"
 
     @property
     def settings_path(self) -> Path:
@@ -335,6 +358,15 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
             raise ConfigError(
                 f"schedule.analysis_time must be HH:MM or empty, not {analysis_time!r}"
             )
+        backup = raw.get("backup", {})
+        backup_time = str(backup.get("time", "") or "")
+        if backup_time and not re.fullmatch(TIME_PATTERN, backup_time):
+            raise ConfigError(f"backup.time must be HH:MM or empty, not {backup_time!r}")
+        if int(backup.get("keep", 3)) < 1 or int(backup.get("max_age_hours", 30)) < 1:
+            raise ConfigError("backup.keep and backup.max_age_hours must be >= 1")
+        backup_prefix = str(backup.get("prefix", "murmur")).strip("/")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", backup_prefix):
+            raise ConfigError(f"backup.prefix must be a plain S3 key prefix, not {backup_prefix!r}")
         splits = str(raw.get("prices", {}).get("splits", "auto"))
         if splits not in SPLIT_SOURCES:
             raise ConfigError(f"prices.splits must be one of {SPLIT_SOURCES}, not {splits!r}")
@@ -411,6 +443,12 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 paused=bool(raw["schedule"].get("paused", False)),
                 retries=int(raw["schedule"]["retries"]),
                 retry_delay_minutes=int(raw["schedule"]["retry_delay_minutes"]),
+            ),
+            backup=BackupConfig(
+                time=backup_time,
+                keep=int(backup.get("keep", 3)),
+                prefix=backup_prefix,
+                max_age_hours=int(backup.get("max_age_hours", 30)),
             ),
             api=ApiConfig(
                 host=str(api.get("host", "0.0.0.0")),
@@ -574,6 +612,32 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "integer",
         "min": 1,
         "help": "Minutes between attempts.",
+    },
+    {
+        "path": "backup.time",
+        "type": "string",
+        "pattern": TIME_PATTERN,
+        "help": (
+            "Daily store snapshot (HH:MM) into data/backups, uploaded offsite by the"
+            " murmur-backup service when S3 is configured. Empty = no scheduled snapshot."
+        ),
+    },
+    {
+        "path": "backup.keep",
+        "type": "integer",
+        "min": 1,
+        "help": "Snapshots kept on the data volume (older ones are deleted).",
+    },
+    {
+        "path": "backup.prefix",
+        "type": "string",
+        "help": "S3 key prefix for the offsite copies (bucket and keys are env only).",
+    },
+    {
+        "path": "backup.max_age_hours",
+        "type": "integer",
+        "min": 1,
+        "help": "The health report flags the offsite copy when the last upload is older.",
     },
     {
         "path": "ui.title",

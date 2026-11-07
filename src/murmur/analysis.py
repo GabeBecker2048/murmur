@@ -369,6 +369,149 @@ def analyze_day(store: Store, config: Config, day: date, tickers: list[str]) -> 
 # -- rolling ----------------------------------------------------------------
 
 
+PLACEBO_PERMUTATIONS = 200
+PLACEBO_PAIRS = ((DAY, "daily"),)
+"""The headline pair only: day sentiment vs the same session's daily return."""
+
+
+@dataclass(frozen=True)
+class PlaceboRow:
+    months: int
+    window: str
+    return_type: str
+    lag: int
+    source: str
+    n: int
+    real_r: float
+    null_mean: float
+    null_sd: float
+    null_low: float
+    null_high: float
+    z: float | None
+    p_perm: float
+    permutations: int
+
+
+def shuffled_null(x, y, groups, permutations: int, rng, chunk: int = 50):
+    """Pearson r of ``y`` against ``x`` shuffled within each group (a session), for
+    ``permutations`` independent shuffles. Each day keeps its own sentiment values and
+    returns, so whatever correlation comes from market-wide days (good news on up days)
+    survives into the null; only the pairing of a company's headlines with that
+    company's own return is destroyed. A real r above the null is company-specific."""
+    import numpy as np
+
+    order = np.argsort(groups, kind="stable")
+    x, y = np.asarray(x, float)[order], np.asarray(y, float)[order]
+    codes = np.unique(np.asarray(groups)[order], return_inverse=True)[1].astype(float)
+    n = len(x)
+    yc = y - y.mean()
+    denom = n * x.std() * y.std()
+    out = []
+    for start in range(0, permutations, chunk):
+        k = min(chunk, permutations - start)
+        # sorting group code + U[0,1) keeps rows inside their group, in random order
+        perm = np.argsort(codes[None, :] + rng.random((k, n)), axis=1)
+        out.append(((x[perm] - x.mean()) * yc).sum(axis=1) / denom)
+    return np.concatenate(out)
+
+
+def placebo_analysis(
+    store: Store,
+    config: Config,
+    as_of: date,
+    tickers: list[str],
+    permutations: int = PLACEBO_PERMUTATIONS,
+) -> list[PlaceboRow]:
+    """The shuffle test as of ``as_of`` for every horizon and lag of the headline pair,
+    pooled over sources. Deterministic for a given day (seeded by the date). Rows for
+    ``as_of`` are replaced."""
+    import numpy as np
+    import pandas as pd
+
+    model = config.sentiment.model
+    start = months_before(as_of, max(HORIZONS))
+    sessions = sessions_between(months_before(start, 1), as_of)
+    index = {d.isoformat(): i for i, d in enumerate(sessions)}
+    rets = pd.DataFrame(
+        [tuple(r) for r in store.returns_between(sessions[0].isoformat(), as_of.isoformat())],
+        columns=["ticker", "date", *RETURN_TYPES],
+    )
+    ws = pd.DataFrame(
+        [
+            tuple(r)
+            for r in store.window_sentiment_between(
+                start.isoformat(), as_of.isoformat(), model, SOURCE
+            )
+        ],
+        columns=["date", "ticker", "window", "n_articles", "mean_score"],
+    )
+    rows: list[PlaceboRow] = []
+    if not rets.empty and not ws.empty:
+        rng = np.random.default_rng(int(as_of.strftime("%Y%m%d")))
+        rets["s"] = rets["date"].map(index)
+        rets = rets.dropna(subset=["s"])
+        ws = ws[ws["ticker"].isin(set(tickers))].copy()
+        ws["s"] = ws["date"].map(index)
+        ws = ws.dropna(subset=["s"])
+        for months in HORIZONS:
+            w_h = ws[ws["date"] >= months_before(as_of, months).isoformat()]
+            for window, return_type in PLACEBO_PAIRS:
+                w = w_h[w_h["window"] == window]
+                for lag in LAGS:
+                    m = w.merge(rets.assign(s=rets["s"] - lag), on=["ticker", "s"])
+                    m = m.dropna(subset=["mean_score", return_type])
+                    if len(m) < MIN_POOLED or m["mean_score"].std() == 0:
+                        continue
+                    x, y = m["mean_score"].to_numpy(), m[return_type].to_numpy()
+                    real = float(np.corrcoef(x, y)[0, 1])
+                    null = shuffled_null(x, y, m["s"].to_numpy(), permutations, rng)
+                    sd = float(null.std())
+                    rows.append(
+                        PlaceboRow(
+                            months,
+                            window,
+                            return_type,
+                            lag,
+                            SOURCE,
+                            len(m),
+                            real,
+                            float(null.mean()),
+                            sd,
+                            float(np.percentile(null, 2.5)),
+                            float(np.percentile(null, 97.5)),
+                            (real - float(null.mean())) / sd if sd > 0 else None,
+                            float((np.sum(np.abs(null) >= abs(real)) + 1) / (permutations + 1)),
+                            permutations,
+                        )
+                    )
+    computed_at = utc_now_iso()
+    store.replace_placebo(
+        as_of.isoformat(),
+        (
+            (
+                r.months,
+                r.window,
+                r.return_type,
+                r.lag,
+                r.source,
+                r.n,
+                r.real_r,
+                r.null_mean,
+                r.null_sd,
+                r.null_low,
+                r.null_high,
+                r.z,
+                r.p_perm,
+                r.permutations,
+                computed_at,
+            )
+            for r in rows
+        ),
+    )
+    log.info("placebo as of %s: %d rows", as_of, len(rows))
+    return rows
+
+
 @dataclass(frozen=True)
 class RollingRow:
     months: int

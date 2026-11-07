@@ -156,6 +156,10 @@ def q_daily(store: Store, config: Config, iso: str) -> list[tuple]:
     return _rows(store.correlations_on(iso), DAILY_COLUMNS)
 
 
+def q_placebo(store: Store, config: Config, iso: str) -> list[tuple]:
+    return [tuple(r) for r in store.placebo_on(iso)]
+
+
 def q_rolling(store: Store, config: Config, iso: str) -> list[tuple]:
     """Pooled rolling results only; per-company rows are the monthly snapshot table."""
     return [
@@ -281,6 +285,8 @@ ROLLING_COLUMNS = (
     "ci_high",
     "computed_at",
 )
+PLACEBO_COLUMNS = Store.PLACEBO_COLUMNS
+PLACEBO_KEY = ("as_of", "months", "window", "return_type", "lag", "source")
 ROLLING_TICKERS_KEY = (
     "as_of",
     "months",
@@ -390,7 +396,9 @@ def datasets(config: Config) -> list[Dataset]:
             "correlation of window sentiment with each return type at lags -1, 0 and +1, "
             "pooled and per source. `rolling`: the same over 1, 3, 6 and 12 months, pooled, "
             "as of every session. `rolling_tickers`: the per-company rolling results as of "
-            "each month's last session (monthly). The PNG charts are drawn from these tables.",
+            "each month's last session (monthly). `placebo`: the shuffle test, the pooled "
+            "day-sentiment/daily-return r next to the r of 200 shuffles of each session's "
+            "sentiment across companies. The PNG charts are drawn from these tables.",
             DAILY,
             (
                 Table(
@@ -400,6 +408,7 @@ def datasets(config: Config) -> list[Dataset]:
                     q_daily,
                 ),
                 Table("rolling", ROLLING_COLUMNS, ROLLING_KEY, q_rolling),
+                Table("placebo", PLACEBO_COLUMNS, PLACEBO_KEY, q_placebo),
                 Table(
                     "rolling_tickers",
                     ROLLING_TICKERS_COLUMNS,
