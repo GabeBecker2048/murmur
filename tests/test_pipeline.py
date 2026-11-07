@@ -481,3 +481,32 @@ def test_backfill_keeps_every_yahoo_headline_and_records_both_sources(store, cfg
     news = pd.read_parquet(cfg.published_dir / "news/2026/11/05/20261105.articles.parquet")
     apple = news[(news.ticker == "AAPL") & (news.url == "https://e/AAPL/1")].iloc[0]
     assert apple.source == "yahoo" and apple.sources == "yahoo,finnhub"
+
+
+def test_cli_health_roles(cfg, capsys):
+    from murmur.jobs import write_heartbeat
+
+    assert cli.main(["-c", str(cfg.source_path), "health", "--role", "worker"]) == 1
+    write_heartbeat(cfg.worker_heartbeat_path)
+    assert cli.main(["-c", str(cfg.source_path), "health", "--role", "worker"]) == 0
+    assert cli.main(["-c", str(cfg.source_path), "health", "--file"]) == 1  # scheduler missing
+    write_heartbeat(cfg.heartbeat_path)
+    assert cli.main(["-c", str(cfg.source_path), "health", "--role", "scheduler"]) == 0
+    assert "fresh" in capsys.readouterr().out
+
+
+def test_compose_has_one_worker_and_three_services():
+    import pathlib as _p
+
+    import yaml
+
+    root = _p.Path(__file__).resolve().parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    services = compose["services"]
+    assert set(services) == {"murmur", "murmur-scheduler", "murmur-worker"}
+    commands = {name: " ".join(svc["command"]) for name, svc in services.items()}
+    assert sum(1 for c in commands.values() if c.endswith("murmur worker")) == 1
+    assert commands["murmur"] == "murmur serve --no-worker"
+    assert commands["murmur-scheduler"] == "murmur scheduler"
+    assert "8100:8100" in services["murmur"]["ports"] and "ports" not in services["murmur-worker"]
+    assert services["murmur-worker"]["healthcheck"]["test"][-1] == "worker"

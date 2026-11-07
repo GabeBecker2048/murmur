@@ -487,3 +487,16 @@ def test_caps_and_weights_are_rounded_everywhere(client):
     assert client.get("/api/v1/universe").json()["members"][1]["market_cap"] == 4_000_000_000_000
     assert client.get("/api/v1/tickers").json()["items"][0]["market_cap"] == 5_000_000_000_000
     assert client.get("/api/v1/companies/AAPL").json()["history"][0]["weight"] == 0.5556
+
+
+def test_status_reports_services_in_split_mode(client, provider):
+    from murmur.jobs import write_heartbeat
+
+    st = client.get("/api/v1/status").json()
+    assert st["worker"]["mode"] == "split" and st["worker"]["alive"] is False
+    write_heartbeat(provider.get().worker_heartbeat_path)
+    write_heartbeat(provider.get().heartbeat_path)
+    st = client.get("/api/v1/status").json()
+    assert st["worker"]["alive"] is True and st["worker"]["scheduler"] is True
+    h = client.get("/api/v1/health").json()
+    assert h["ok"] and h["services"]["worker"]["heartbeat_age"] < 5

@@ -197,7 +197,12 @@ class Config:
 
     @property
     def heartbeat_path(self) -> Path:
+        """The scheduler's heartbeat (written by every tick)."""
         return self.data_dir / "heartbeat"
+
+    @property
+    def worker_heartbeat_path(self) -> Path:
+        return self.data_dir / "worker.heartbeat"
 
     @property
     def settings_path(self) -> Path:

@@ -26,19 +26,26 @@ the three maintainers can merge. `dockerized` is an old branch kept on purpose.
 and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
 and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
 
-## The API and jobs (0.6.0, extended in 0.7.0)
+## The API and jobs (0.6.0, extended in 0.7.0; split into services in 0.8.0)
 
-- `murmur serve` = uvicorn + `api.app.create_app(provider)`; lifespan opens/migrates the store
-  once, starts one `jobs.Worker` (scheduler tick inside it), stops it with a 55 s join.
+- `murmur serve` = uvicorn + `api.app.create_app(provider, worker=, scheduler=)`; lifespan
+  opens/migrates the store once and, unless `--no-worker`, starts one in-process
+  `jobs.Worker` (55 s join on stop). The server runs the split: `serve --no-worker`,
+  `murmur scheduler` (`jobs.scheduler_main` → `scheduler_loop` → `tick()` every 60 s, writes
+  `heartbeat_path`) and `murmur worker` (`jobs.worker_main`; the Worker polls every 5 s and
+  writes `worker_heartbeat_path` every 10 s from a side thread; `STALE_SECONDS` 300).
+  `health --role api|scheduler|worker` is each container's check (`--file` = scheduler).
+  `api.routes.status.services()` reports both heartbeats; the in-process Worker ticks from
+  its own thread so a long job never delays the daily run (0.7.x bug).
 - `src/murmur/jobs.py` is core (no FastAPI): `JobContext`/`report()`/`check()` are no-ops
   outside a job; `JobCancelled` is a BaseException; handlers in `HANDLERS` keyed by type;
-  `enqueue()` validates (`JobError` → 400, `DuplicateJob` → 409). The worker's `_tick` walks
+  `enqueue()` validates (`JobError` → 400, `DuplicateJob` → 409). `jobs.tick()` walks
   `config.schedule.slots` (`[(time, kind)]`: one `full` slot, or `collect` at `time` +
   `analyze` at `analysis_time`), and queues a `run` job (priority -10, `params.kind`) for
   `target_day(slot_time, kind)` when the slot passed and no successful run of that kind
   (`runs.kind`, schema v8) or active job exists; nothing while `schedule.paused`. Failed
-  scheduled runs re-queue with `not_before`. Boot marks pre-boot running jobs `interrupted`
-  and drops pre-boot queued ones (`created_at < booted_at`). `pipeline.KIND_STAGES` says what
+  scheduled runs re-queue with `not_before`. The worker's boot marks pre-boot running jobs
+  `interrupted` and re-queues the `RESUMABLE` ones (trigger `restart`); queued jobs are kept. `pipeline.KIND_STAGES` says what
   each kind runs; `pipeline.backfill` is the `backfill` job (range, stage subset,
   `regenerate` needs `confirm`).
 - `src/murmur/api/`: `deps.get_store` opens a per-request Store with `check_same_thread=False`
@@ -71,8 +78,9 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
 uv sync --all-groups                      # .venv with CPU-only torch (Linux) + dev tools
 uv run murmur run [--date YYYY-MM-DD]     # universe -> news -> prices -> sentiment -> analyze -> export
 uv run murmur universe|news|prices|analyze|export  # one stage; universe --rebuild recomputes the month
-uv run murmur serve                       # API + scheduler + worker (container main process)
-uv run murmur schedule                    # scheduler only, no HTTP; runs / health (HTTP) / health --file
+uv run murmur serve                       # API + UI (+ scheduler + worker in-process unless --no-worker)
+uv run murmur scheduler|worker [--once]   # the two other services; health --role api|scheduler|worker
+uv run murmur schedule                    # legacy scheduler loop, no HTTP, no jobs
 uv run murmur -v ...                      # debug logging; -c PATH for a config file
 uv run ruff check . && uv run ruff format --check .
 uv run pytest                             # no network, no model download

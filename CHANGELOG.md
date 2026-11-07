@@ -4,6 +4,34 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.8.0] - Unreleased
+
+Hardening. Four pull requests; released when the last one lands.
+
+### Added
+
+- The API, the scheduler and the worker are separate processes: `murmur serve
+  --no-worker`, `murmur scheduler` and `murmur worker`, three services from
+  one image in `docker-compose.yml`, each with its own health check (`murmur
+  health --role api|scheduler|worker` reads the HTTP endpoint or that
+  process's heartbeat file, written every 10 s, stale after 5 min). A
+  dashboard deploy no longer interrupts a job. `murmur serve` alone still runs
+  everything in one process. `/status` and `/health` report the two heartbeats
+  (`services`) in either mode.
+- A worker restart re-queues the job it interrupted when the job is safe to
+  repeat (backfill, analyze, export, news, prices, sentiment, universe,
+  backup, vacuum), with trigger `restart`. Queued jobs survive a restart (they
+  used to be dropped).
+- `--once` on `murmur scheduler` (one tick) and `murmur worker` (drain the
+  queue); the image smoke test runs both.
+
+### Fixed
+
+- The scheduler ticked only when the worker was idle, so during a long queue
+  (the one-year backfill, 2026-11-06) the daily run was not queued until the
+  queue drained and the heartbeat went stale. The tick now runs on its own
+  timer, in its own process on the server.
+
 ## [0.7.2] - 2026-11-06
 
 Licensing made explicit, and prices published.

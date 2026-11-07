@@ -383,7 +383,7 @@ class Store:
 
     def record_universe(self, date: str, members: Iterable[UniverseMember], source: str) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute("DELETE FROM universe_membership WHERE date = ?", (date,))
             self.conn.executemany(
                 """INSERT INTO universe_membership (date, ticker, name, market_cap, rank, source,
@@ -416,7 +416,7 @@ class Store:
         method: str = "live",
     ) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,))
             self.conn.executemany(
                 """INSERT INTO universe_months (month, rank, ticker, cik, name, market_cap,
@@ -537,7 +537,7 @@ class Store:
         exchange: str | None = None,
     ) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 """INSERT INTO companies (cik, ticker, name, country, country_checked_at,
                                           exchange)
@@ -552,7 +552,7 @@ class Store:
 
     def set_company_exchange(self, cik: int, exchange: str) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute("UPDATE companies SET exchange = ? WHERE cik = ?", (exchange, cik))
 
     # -- runs -----------------------------------------------------------------
@@ -561,7 +561,7 @@ class Store:
         self, date: str, trigger: str, attempt: int, started_at: str, kind: str = "full"
     ) -> int:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             cur = self.conn.execute(
                 """INSERT INTO runs (date, trigger, attempt, started_at, kind)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -571,7 +571,7 @@ class Store:
 
     def finish_run(self, run_id: int, finished_at: str, ok: bool, stages_json: str) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 "UPDATE runs SET finished_at = ?, ok = ?, stages = ? WHERE id = ?",
                 (finished_at, int(ok), stages_json, run_id),
@@ -602,7 +602,7 @@ class Store:
     def upsert_splits(self, splits: Iterable[Split], source: str) -> int:
         rows = [(x.ticker, x.execution_date, x.ratio, source) for x in splits]
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.executemany(
                 """INSERT INTO splits (ticker, execution_date, ratio, source)
                    VALUES (?, ?, ?, ?)
@@ -639,7 +639,7 @@ class Store:
         """
         norm = normalize_title(article.title)
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             row = self.conn.execute(
                 "SELECT id FROM articles WHERE url = ?", (article.url,)
             ).fetchone()
@@ -763,7 +763,7 @@ class Store:
     def set_article_windows(self, rows: Iterable[tuple[str, str, int]]) -> None:
         """``(trading_day, window, article_id)`` triples."""
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.executemany(
                 "UPDATE articles SET trading_day = ?, window = ? WHERE id = ?", list(rows)
             )
@@ -801,7 +801,7 @@ class Store:
             for b in bars
         ]
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.executemany(
                 """INSERT INTO prices (ticker, date, open, high, low, close, adj_close, volume,
                                        source)
@@ -834,7 +834,7 @@ class Store:
             for aid, s in scored
         ]
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.executemany(
                 """INSERT INTO sentiment (article_id, model, positive, negative, neutral, label,
                                           score, scored_at)
@@ -898,7 +898,7 @@ class Store:
         source: str = "all",
     ) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 "DELETE FROM window_sentiment "
                 "WHERE date = ? AND window = ? AND source = ? AND model = ?",
@@ -923,7 +923,7 @@ class Store:
         """``(ticker, date, prev_date, prev_close, open, close, overnight, intraday, daily)``."""
         rows = list(rows)
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.executemany(
                 """INSERT INTO returns (ticker, date, prev_date, prev_close, open, close,
                                         overnight, intraday, daily)
@@ -963,7 +963,7 @@ class Store:
         ci_high, computed_at)``)."""
         rows = list(rows)
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute("DELETE FROM rolling_correlations WHERE as_of = ?", (as_of,))
             self.conn.executemany(
                 """INSERT INTO rolling_correlations (as_of, months, window, return_type, lag,
@@ -1025,7 +1025,7 @@ class Store:
 
     def upsert_correlation(self, row: dict) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 """INSERT INTO correlations (date, window, return_type, lag, scope, source,
                                              method, model, n, estimate, p_value, ci_low,
@@ -1085,7 +1085,7 @@ class Store:
         import json
 
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             cur = self.conn.execute(
                 """INSERT INTO jobs (type, params, day, trigger, status, priority, not_before,
                                      attempt, created_at)
@@ -1128,7 +1128,7 @@ class Store:
 
     def start_job(self, job_id: int, started_at: str) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
                 (started_at, job_id),
@@ -1147,7 +1147,7 @@ class Store:
         if not sets:
             return
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", (*vals, job_id))
 
     def finish_job(
@@ -1162,7 +1162,7 @@ class Store:
         run_id: int | None = None,
     ) -> None:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             self.conn.execute(
                 """UPDATE jobs SET status = ?, finished_at = ?, result = ?, error = ?,
                                    log = coalesce(?, log), run_id = coalesce(?, run_id)
@@ -1178,7 +1178,7 @@ class Store:
             return None
         new = "cancelled" if row["status"] == "queued" else "cancelling"
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             if new == "cancelled":
                 self.conn.execute(
                     "UPDATE jobs SET status = 'cancelled', finished_at = ? WHERE id = ?",
@@ -1210,25 +1210,31 @@ class Store:
         ).fetchall()
         return rows, total
 
-    def mark_interrupted(self, now: str, before: str | None = None) -> int:
-        """On boot: running/cancelling jobs became ``interrupted``; jobs queued before
-        ``before`` (the boot time) are dropped. Jobs queued since boot are kept."""
+    def mark_interrupted(self, now: str, before: str | None = None) -> list[sqlite3.Row]:
+        """On boot: jobs still ``running``/``cancelling`` from before ``before`` (the boot
+        time) become ``interrupted``. Queued jobs are kept: the API queues them whether or
+        not a worker is up, so a worker restart must not lose them. Returns the jobs
+        marked interrupted (id, type, params) so the caller can re-queue the safe ones."""
         before = before or now
         with self.conn:
-            self.conn.execute("BEGIN")
-            n = self.conn.execute(
+            self.conn.execute("BEGIN IMMEDIATE")  # select-then-write: take the lock up front
+            rows = self.conn.execute(
+                """SELECT id, type, params FROM jobs
+                   WHERE status IN ('running', 'cancelling') AND started_at < ? ORDER BY id""",
+                (before,),
+            ).fetchall()
+            self.conn.execute(
                 """UPDATE jobs SET status = 'interrupted', finished_at = ?,
                                    error = 'process stopped while the job was running'
                    WHERE status IN ('running', 'cancelling') AND started_at < ?""",
                 (now, before),
-            ).rowcount
-            self.conn.execute(
-                """UPDATE jobs SET status = 'cancelled', finished_at = ?,
-                                   error = 'dropped on restart'
-                   WHERE status = 'queued' AND created_at < ?""",
-                (now, before),
             )
-        return n
+        return rows
+
+    def running_job(self) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM jobs WHERE status IN ('running', 'cancelling') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
 
     def run_jobs_for_day(self, day: str, kind: str | None = None) -> list[sqlite3.Row]:
         """Run jobs for a day; with ``kind``, only those of that kind (a job without a
@@ -1474,7 +1480,7 @@ class Store:
 
     def delete_analysis(self, date: str) -> dict[str, int]:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             out = {}
             for table, col in (
                 ("returns", "date"),
@@ -1489,7 +1495,7 @@ class Store:
 
     def delete_scores(self, model: str) -> dict[str, int]:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             return {
                 "sentiment": self.conn.execute(
                     "DELETE FROM sentiment WHERE model = ?", (model,)
@@ -1504,7 +1510,7 @@ class Store:
 
     def delete_universe_month(self, month: str) -> int:
         with self.conn:
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE")
             n = self.conn.execute("DELETE FROM universe_months WHERE month = ?", (month,)).rowcount
             self.conn.execute("DELETE FROM universe_membership WHERE date LIKE ? || '%'", (month,))
             return n

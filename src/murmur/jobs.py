@@ -445,8 +445,106 @@ class _JobLogHandler(logging.Handler):
         return "".join(self.lines)
 
 
+RESUMABLE = {
+    "backfill",
+    "analyze",
+    "export",
+    "news",
+    "prices",
+    "sentiment",
+    "universe",
+    "backup",
+    "vacuum",
+}
+"""Job types a restart re-queues when it finds them interrupted: all idempotent, so
+re-running picks up where the store already is. ``run`` is not: the scheduler's catch-up
+owns it. Destructive jobs are never re-queued."""
+HEARTBEAT_SECONDS = 10.0
+STALE_SECONDS = 300.0
+
+
+def write_heartbeat(path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(datetime.now().astimezone().isoformat(timespec="seconds"))
+
+
+def tick(provider: ConfigProvider, now: datetime | None = None) -> list[int]:
+    """One scheduler tick: queue the daily run for each slot whose time has passed and
+    has no successful run or active job, then write the scheduler heartbeat. Used by the
+    ``murmur scheduler`` process and by the in-process ticker thread of ``murmur serve``.
+    Returns the ids of jobs queued."""
+    from zoneinfo import ZoneInfo
+
+    config = provider.get()
+    tz = ZoneInfo(config.timezone)
+    now = (now or datetime.now(tz)).astimezone(tz)
+    queued: list[int] = []
+    if not config.schedule.paused:
+        with Store(config.store_path, migrate=False) as store:
+            for slot_time, kind in config.schedule.slots:
+                job_id = _queue_slot(store, config, now, slot_time, kind)
+                if job_id is not None:
+                    queued.append(job_id)
+    write_heartbeat(config.heartbeat_path)
+    if queued:
+        Worker.wake_all()
+    return queued
+
+
+def _queue_slot(store: Store, config: Config, now: datetime, slot: str, kind: str) -> int | None:
+    hour, minute = (int(x) for x in slot.split(":"))
+    fire = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now < fire:
+        return None
+    day = target_day(fire, kind).isoformat()  # decided at the slot time, not at `now`
+    if store.successful_run_exists(day, kind):
+        return None
+    jobs = store.run_jobs_for_day(day, kind)
+    active = any(j["status"] in ("queued", "running", "cancelling") for j in jobs)
+    attempts = sum(1 for j in jobs if j["status"] in ("failed", "interrupted"))
+    if active or attempts >= 1 + config.schedule.retries:
+        return None
+    params = {"date": day, "trigger": TRIGGER_SCHEDULE, "attempt": attempts + 1}
+    if kind != "full":
+        params["kind"] = kind
+    job_id = store.create_job(
+        "run",
+        params,
+        TRIGGER_SCHEDULE,
+        utc_now_iso(),
+        day=day,
+        priority=SCHEDULE_PRIORITY,
+        attempt=attempts + 1,
+    )
+    log.info("scheduler: queued %s run %d for %s (attempt %d)", kind, job_id, day, attempts + 1)
+    return job_id
+
+
+def scheduler_loop(
+    provider: ConfigProvider,
+    stop: threading.Event,
+    tick_seconds: float = 60.0,
+    now: Callable[[], datetime] | None = None,
+    once: bool = False,
+) -> int:
+    """The ``murmur scheduler`` process: tick, sleep, repeat. Returns ticks done."""
+    ticks = 0
+    while not stop.is_set():
+        try:
+            tick(provider, now() if now else None)
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the scheduler
+            log.exception("scheduler tick failed")
+        ticks += 1
+        if once:
+            break
+        stop.wait(tick_seconds)
+    return ticks
+
+
 class Worker(threading.Thread):
-    """Runs queued jobs one at a time and, between jobs, the scheduler tick."""
+    """Runs queued jobs one at a time. With ``scheduler=True`` (the single-process
+    ``murmur serve``) a side thread ticks the scheduler on its own clock, so a long job
+    never delays the daily run; ``murmur scheduler`` is that thread as a process."""
 
     _instances: list[Worker] = []
 
@@ -456,12 +554,14 @@ class Worker(threading.Thread):
         *,
         scheduler: bool = True,
         tick_seconds: float = 60.0,
+        poll_seconds: float = 5.0,
         now: Callable[[], datetime] | None = None,
     ):
         super().__init__(name="murmur-worker", daemon=True)
         self.provider = provider
         self.scheduler = scheduler
         self.tick_seconds = tick_seconds
+        self.poll_seconds = poll_seconds
         self._now = now
         self._halt = threading.Event()
         self._wake = threading.Event()
@@ -473,6 +573,8 @@ class Worker(threading.Thread):
         self.last_tick: str | None = None
         self.live_log: _JobLogHandler | None = None
         self.error: str | None = None
+        self.idle = threading.Event()
+        """Set whenever the queue is empty (``murmur worker --once`` waits on it)."""
         murmur_logger = logging.getLogger("murmur")
         if murmur_logger.getEffectiveLevel() > logging.INFO:
             murmur_logger.setLevel(logging.INFO)  # job logs are captured at INFO
@@ -502,63 +604,65 @@ class Worker(threading.Thread):
     def run(self) -> None:
         try:
             with Store(self.provider.get().store_path) as store:
-                store.mark_interrupted(utc_now_iso(), before=self.booted_at)
+                self._boot(store)
+            threading.Thread(
+                target=self._heartbeat_loop, name="murmur-heartbeat", daemon=True
+            ).start()
+            if self.scheduler:
+                threading.Thread(target=self._tick_loop, name="murmur-ticker", daemon=True).start()
             self.ready.set()
             while not self._halt.is_set():
-                with Store(self.provider.get().store_path) as store:
+                with Store(self.provider.get().store_path, migrate=False) as store:
                     job = store.next_job(utc_now_iso())
                     if job is not None:
+                        self.idle.clear()
                         self._execute(store, job)
                         continue
-                    if self.scheduler:
-                        self._tick(store)
-                self._wake.wait(self.tick_seconds)
+                    self.idle.set()
+                self._wake.wait(self.poll_seconds)
                 self._wake.clear()
         except Exception as e:  # the thread must never die silently
             self.error = f"{type(e).__name__}: {e}"
             log.exception("worker crashed")
             self.ready.set()
+            self.idle.set()
 
-    def _tick(self, store: Store) -> None:
-        """Enqueue each daily slot's run when its time has passed, and write the heartbeat."""
-        config = self.provider.get()
-        now = self.now()
-        if not config.schedule.paused:
-            for slot_time, kind in config.schedule.slots:
-                self._queue_slot(store, config, now, slot_time, kind)
-        config.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
-        config.heartbeat_path.write_text(datetime.now().astimezone().isoformat(timespec="seconds"))
-        self.last_tick = utc_now_iso()
+    def _boot(self, store: Store) -> None:
+        """Mark what a previous process left running as interrupted and re-queue the
+        interrupted jobs that are safe to repeat. Queued jobs are kept as they are."""
+        interrupted = store.mark_interrupted(utc_now_iso(), before=self.booted_at)
+        for row in interrupted:
+            if row["type"] not in RESUMABLE:
+                continue
+            params = json.loads(row["params"])
+            try:
+                new_id = enqueue(store, row["type"], params, trigger="restart")
+            except (JobError, DuplicateJob) as e:
+                log.warning("not re-queuing interrupted job %d: %s", row["id"], e)
+                continue
+            log.warning(
+                "job %d (%s) was interrupted by a restart; re-queued as %d",
+                row["id"],
+                row["type"],
+                new_id,
+            )
 
-    def _queue_slot(
-        self, store: Store, config: Config, now: datetime, slot: str, kind: str
-    ) -> None:
-        hour, minute = (int(x) for x in slot.split(":"))
-        fire = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if now < fire:
-            return
-        day = target_day(fire, kind).isoformat()  # decided at the slot time, not at `now`
-        if store.successful_run_exists(day, kind):
-            return
-        jobs = store.run_jobs_for_day(day, kind)
-        active = any(j["status"] in ("queued", "running", "cancelling") for j in jobs)
-        attempts = sum(1 for j in jobs if j["status"] in ("failed", "interrupted"))
-        if active or attempts >= 1 + config.schedule.retries:
-            return
-        params = {"date": day, "trigger": TRIGGER_SCHEDULE, "attempt": attempts + 1}
-        if kind != "full":
-            params["kind"] = kind
-        job_id = store.create_job(
-            "run",
-            params,
-            TRIGGER_SCHEDULE,
-            utc_now_iso(),
-            day=day,
-            priority=SCHEDULE_PRIORITY,
-            attempt=attempts + 1,
-        )
-        log.info("scheduler: queued %s run %d for %s (attempt %d)", kind, job_id, day, attempts + 1)
-        self._wake.set()
+    def _heartbeat_loop(self) -> None:
+        while not self._halt.is_set():
+            try:
+                write_heartbeat(self.provider.get().worker_heartbeat_path)
+            except OSError:
+                pass
+            self._halt.wait(HEARTBEAT_SECONDS)
+
+    def _tick_loop(self) -> None:
+        while not self._halt.is_set():
+            try:
+                tick(self.provider, self.now())
+                self.last_tick = utc_now_iso()
+            except Exception:  # noqa: BLE001
+                log.exception("scheduler tick failed")
+            self._halt.wait(self.tick_seconds)
 
     def _execute(self, store: Store, job) -> None:
         job_id = job["id"]
@@ -638,3 +742,51 @@ class Worker(threading.Thread):
                     job["attempt"] + 1,
                     not_before,
                 )
+
+
+def worker_main(provider: ConfigProvider, once: bool = False, poll_seconds: float = 5.0) -> int:
+    """The ``murmur worker`` process: one Worker, no scheduler, SIGTERM stops it cleanly.
+    ``once`` returns as soon as the queue is empty (CI, ad-hoc draining)."""
+    import signal
+
+    worker = Worker(provider, scheduler=False, poll_seconds=poll_seconds)
+    stopping = threading.Event()
+
+    def on_signal(*_):
+        log.info("stop requested; finishing the current step")
+        stopping.set()
+        worker._wake.set()
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    worker.start()
+    worker.ready.wait()
+    try:
+        while worker.is_alive() and not stopping.is_set():
+            if once and worker.idle.wait(0.5) and worker.current_job_id is None:
+                with Store(provider.get().store_path, migrate=False) as store:
+                    if store.next_queued() is None:
+                        break
+            stopping.wait(0.5)
+    finally:
+        worker.stop(timeout=55)
+    return 0 if worker.error is None else 1
+
+
+def scheduler_main(provider: ConfigProvider, once: bool = False, tick_seconds: float = 60.0) -> int:
+    """The ``murmur scheduler`` process."""
+    import signal
+
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    config = provider.get()
+    log.info(
+        "scheduler: slots %s in %s, %d retries %d min apart",
+        config.schedule.slots,
+        config.timezone,
+        config.schedule.retries,
+        config.schedule.retry_delay_minutes,
+    )
+    scheduler_loop(provider, stop, tick_seconds=tick_seconds, once=once)
+    return 0
