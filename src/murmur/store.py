@@ -8,7 +8,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -314,6 +314,29 @@ MIGRATIONS: dict[int, str] = {
         permutations INTEGER NOT NULL,
         computed_at  TEXT NOT NULL,
         PRIMARY KEY (as_of, months, window, return_type, lag, source)
+    );
+    """,
+    11: """
+    -- 0.8.0: the daily index level (recomputed in full after each analysis) and each
+    -- constituent's start-of-day weight, return and contribution to the move.
+    CREATE TABLE index_levels (
+        date          TEXT PRIMARY KEY,
+        level         REAL NOT NULL,
+        return        REAL,
+        constituents  INTEGER NOT NULL,
+        priced        INTEGER NOT NULL,
+        weight_priced REAL,
+        rebalance     INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE index_contributions (
+        date         TEXT NOT NULL,
+        ticker       TEXT NOT NULL,
+        cik          INTEGER,
+        weight       REAL NOT NULL,
+        return       REAL,
+        contribution REAL,
+        points       REAL,
+        PRIMARY KEY (date, ticker)
     );
     """,
 }
@@ -1049,6 +1072,39 @@ class Store:
             f"""SELECT {", ".join(self.PLACEBO_COLUMNS)} FROM placebo WHERE as_of = ?
                 ORDER BY months, window, return_type, lag, source""",
             (as_of,),
+        ).fetchall()
+
+    def replace_index_levels(self, levels: list[tuple], contributions: list[tuple]) -> None:
+        """Replace the whole level history. ``levels``: (date, level, return, constituents,
+        priced, weight_priced, rebalance); ``contributions``: (date, ticker, cik, weight,
+        return, contribution, points)."""
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("DELETE FROM index_levels")
+            self.conn.execute("DELETE FROM index_contributions")
+            self.conn.executemany("INSERT INTO index_levels VALUES (?, ?, ?, ?, ?, ?, ?)", levels)
+            self.conn.executemany(
+                "INSERT INTO index_contributions VALUES (?, ?, ?, ?, ?, ?, ?)", contributions
+            )
+
+    def index_levels_between(self, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT date, level, return, constituents, priced, weight_priced, rebalance
+               FROM index_levels WHERE date >= ? AND date <= ? ORDER BY date""",
+            (start, end),
+        ).fetchall()
+
+    def index_level_on(self, day: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM index_levels WHERE date = ?", (day,)).fetchone()
+
+    def latest_index_level_day(self) -> str | None:
+        return self.conn.execute("SELECT max(date) FROM index_levels").fetchone()[0]
+
+    def index_contributions_on(self, day: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT date, ticker, cik, weight, return, contribution, points
+               FROM index_contributions WHERE date = ? ORDER BY contribution DESC, ticker""",
+            (day,),
         ).fetchall()
 
     def latest_placebo_as_of(self) -> str | None:

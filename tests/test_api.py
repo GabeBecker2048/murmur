@@ -584,3 +584,30 @@ def test_placebo_route(client, provider):
     body = client.get("/api/v1/placebo").json()
     assert body["as_of"] == "2026-11-05" and body["items"][0]["z"] == 24.0
     assert client.get("/api/v1/placebo?as_of=nope").status_code == 422
+
+
+def test_index_level_routes(client, provider):
+    assert client.get("/api/v1/index/m100/level").json()["items"] == []
+    assert client.get("/api/v1/index/m100/level/latest").status_code == 404
+    with Store(provider.get().store_path) as s:
+        s.replace_index_levels(
+            [
+                ("2026-11-04", 1000.0, None, 2, 0, None, 1),
+                ("2026-11-05", 1010.0, 0.01, 2, 2, 1.0, 0),
+            ],
+            [
+                ("2026-11-05", "AAPL", 320193, 0.6, 0.02, 0.012, 12.0),
+                ("2026-11-05", "MSFT", 789019, 0.4, -0.005, -0.002, -2.0),
+            ],
+        )
+    body = client.get("/api/v1/index/m100/level").json()
+    assert body["base_date"] == "2026-11-04" and body["total"] == 2
+    assert body["items"][0]["rebalance"] is True
+    assert client.get("/api/v1/index/m100/level?from=2026-11-05").json()["total"] == 1
+    day = client.get("/api/v1/index/m100/level/latest").json()
+    assert day["date"] == "2026-11-05" and [c["ticker"] for c in day["contributions"]] == [
+        "AAPL",
+        "MSFT",
+    ]
+    assert client.get("/api/v1/index/m100/level/nope").status_code == 422
+    assert client.get("/api/v1/index/x100/level").status_code == 404

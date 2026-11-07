@@ -65,6 +65,12 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
 - The shuffle test: `analysis.placebo_analysis` (after `rolling_analysis` in `run_analyze`,
   `analyze_all` and per day in `analyze_range`), `shuffled_null` (vectorised within-session
   permutations, seeded by the date), table `placebo` (v10), export table `placebo`.
+- The index level: `src/murmur/index_level.py` (`compute_levels`, `update_levels` replaces
+  the whole history in `index_levels`/`index_contributions`, schema v11) runs after every
+  analysis path; a month's weights take effect at the close of its first session.
+- `docs/*.md` are generated: after changing settings, routes, datasets or columns run
+  `uv run python scripts/gen_docs.py` (`tests/test_docs.py` fails otherwise). A new
+  published column needs a line in `murmur.dictionary.COLUMNS`.
 - Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.
 - The web UI (0.7.0) is `src/murmur/ui/static/`: plain ES modules, no build step, Plotly
   3.1.0 basic vendored under `vendor/` (MIT; version noted in `vendor/README.md`).

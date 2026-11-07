@@ -133,6 +133,28 @@ def q_constituents(store: Store, config: Config, month: str) -> list[tuple]:
     ]
 
 
+def q_level(store: Store, config: Config, iso: str) -> list[tuple]:
+    row = store.index_level_on(iso)
+    if row is None:
+        return []
+    return [tuple(bool(row[c]) if c == "rebalance" else row[c] for c in LEVEL_COLUMNS)]
+
+
+def q_contributions(store: Store, config: Config, iso: str) -> list[tuple]:
+    return [
+        (
+            r["date"],
+            r["cik"],
+            r["ticker"],
+            round_weight(r["weight"]),
+            r["return"],
+            r["contribution"],
+            r["points"],
+        )
+        for r in store.index_contributions_on(iso)
+    ]
+
+
 def q_changes(store: Store, config: Config, month: str) -> list[tuple]:
     return _rows(store.universe_changes(month), CHANGES_COLUMNS)
 
@@ -285,6 +307,16 @@ ROLLING_COLUMNS = (
     "ci_high",
     "computed_at",
 )
+LEVEL_COLUMNS = (
+    "date",
+    "level",
+    "return",
+    "constituents",
+    "priced",
+    "weight_priced",
+    "rebalance",
+)
+CONTRIBUTIONS_COLUMNS = ("date", "cik", "ticker", "weight", "return", "contribution", "points")
 PLACEBO_COLUMNS = Store.PLACEBO_COLUMNS
 PLACEBO_KEY = ("as_of", "months", "window", "return_type", "lag", "source")
 ROLLING_TICKERS_KEY = (
@@ -341,13 +373,26 @@ def datasets(config: Config) -> list[Dataset]:
             "and its weight (share of the total cap). `changes` lists additions and "
             "removals versus the previous month. Months backfilled after the fact are "
             "`reconstructed`: caps from SEC share counts times that day's close, out of "
-            "today's candidate pool.",
+            "today's candidate pool. `level` (daily): the index level, base "
+            f"{config.index.base_level:g} at the close of the base session, chained through "
+            "each session's weighted daily return; a month's weights take effect at the "
+            "close of its first session. `contributions` (daily): each member's "
+            "start-of-day weight, daily return and contribution to the move (in return "
+            "units and in index points).",
             MONTHLY,
             (
                 Table(
                     "constituents", CONSTITUENTS_COLUMNS, ("month", "cik", "ticker"), q_constituents
                 ),
                 Table("changes", CHANGES_COLUMNS, ("month", "cik", "ticker", "action"), q_changes),
+                Table("level", LEVEL_COLUMNS, ("date",), q_level, cadence=DAILY),
+                Table(
+                    "contributions",
+                    CONTRIBUTIONS_COLUMNS,
+                    ("date", "ticker"),
+                    q_contributions,
+                    cadence=DAILY,
+                ),
             ),
             CC_BY,
         ),
@@ -514,9 +559,9 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
     written: list[Path] = []
 
     for ds in datasets(config):
-        if ds.cadence != DAILY:
-            continue
         for table in ds.tables:
+            if table_cadence(ds, table) != DAILY:
+                continue
             rows = table.query(store, config, iso)
             _write_or_remove(
                 day_path(base, ds.name, day, table.name),
@@ -525,7 +570,7 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
                 written,
                 _meta(ds, table, iso),
             )
-        if ds.charts:
+        if ds.charts and ds.cadence == DAILY:
             written += _charts(store, config, base, ds.name, day)
 
     written += export_month(store, config, applicable_month(day))
@@ -641,7 +686,7 @@ def compact_finished_months(base: Path, config: Config, current_month: str) -> l
     """Fold every finished month's day files into one file per table."""
     written = []
     for ds in datasets(config):
-        if ds.cadence != DAILY:
+        if not any(table_cadence(ds, t) == DAILY for t in ds.tables):
             continue
         root = base / ds.name
         if not root.is_dir():

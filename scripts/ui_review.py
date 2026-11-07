@@ -185,7 +185,11 @@ with sync_playwright() as p:
     step("month select updates URL", "month=2026-10" in page.url, page.url)
     shot(page, "07-index")
 
-    # ---- downloads
+    # ---- downloads (prices made private for the private-dataset steps; restored at the end)
+    AUTH = {"authorization": f"Bearer {TOKEN}", "content-type": "application/json"}
+    page.request.put(
+        BASE + "/api/v1/settings", headers=AUTH, data='{"datasets": {"private": ["prices"]}}'
+    )
     page.goto(BASE + "/downloads")
     settle(page)
     page.click("section.card:has-text('News')")
@@ -199,7 +203,7 @@ with sync_playwright() as p:
     step("news CSV downloads", r.status == 200, csv)
     page.click("section.card:has-text('Prices')")
     settle(page)
-    priv = page.locator(".notice.warn").count()
+    priv = page.locator(".notice.warn:has-text('not published')").count()
     step("prices shows the private notice", priv == 1)
     pq = page.locator("a:has-text('Parquet')").first.get_attribute("href")
     r = page.request.get(BASE + pq)
@@ -341,7 +345,10 @@ with sync_playwright() as p:
     settle(page)
     step(
         "private notice for visitors after sign-out",
-        "not published" in page.locator(".notice.warn").inner_text(),
+        page.locator(".notice.warn:has-text('not published')").count() == 1,
+    )
+    page.request.put(
+        BASE + "/api/v1/settings", headers=AUTH, data='{"datasets": {"private": null}}'
     )
 
     # 404 page

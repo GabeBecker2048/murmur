@@ -49,6 +49,11 @@ contact = "gabebecker2048@gmail.com"
 # ("m100" -> Murmur 100). weight = market cap / the month's total.
 name = "m100"
 size = 100
+# The daily level: base_level at the close of base_date, chained through each
+# session's weighted return. Empty base_date = the first trading day of the
+# earliest index month on record.
+base_date = ""
+base_level = 1000
 
 [universe]
 # "marketcap": the top `size` of the index get news and sentiment (coverage;

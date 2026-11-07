@@ -23,6 +23,7 @@ from murmur.analysis import (
 from murmur.clock import is_trading_day, previous_session, utc_now_iso
 from murmur.config import Config
 from murmur.export import export_day
+from murmur.index_level import update_levels
 from murmur.sentiment import SentimentScorer, score_pending
 from murmur.sources.base import NewsSource, PriceSource
 from murmur.sources.splits import SplitsSource
@@ -344,6 +345,7 @@ def run_analyze(store: Store, config: Config, day: date) -> AnalyzeResult:
     if today.trading_day:
         rolling_rows = len(rolling_analysis(store, config, day, tickers))
         placebo_analysis(store, config, day, tickers)
+        update_levels(store, config)
     return AnalyzeResult(today, backfilled, reanalyzed, rolling_rows)
 
 
@@ -359,6 +361,7 @@ def analyze_all(store: Store, config: Config) -> list[date]:
         tickers = universe_tickers(store, days[-1])
         rolling_analysis(store, config, days[-1], tickers)
         placebo_analysis(store, config, days[-1], tickers)
+        update_levels(store, config)
     return days
 
 
@@ -380,6 +383,8 @@ def analyze_range(store: Store, config: Config, start: date, end: date) -> list[
             # the shuffle test is ~1 s a day: run it for every day of a backfill too, so
             # its history is complete
             placebo_analysis(store, config, d, tickers)
+    if days:
+        update_levels(store, config)
     return days
 
 
