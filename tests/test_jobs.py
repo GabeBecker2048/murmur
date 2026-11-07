@@ -392,8 +392,9 @@ def test_interrupted_resumable_jobs_are_requeued_on_boot(provider):
     try:
         with Store(cfg.store_path) as s:
             assert s.job_status(bf) == "interrupted" and s.job_status(run) == "interrupted"
-            rows, _ = s.jobs(status="queued")
-            assert [(r["type"], r["trigger"]) for r in rows] == [("backfill", "restart")]
+            # the worker may already be running the re-queued job, so match any status
+            rows = [r for r in s.jobs(limit=10)[0] if r["trigger"] == "restart"]
+            assert [r["type"] for r in rows] == ["backfill"]
             assert json.loads(rows[0]["params"])["from"] == "2026-10-01"
     finally:
         worker.stop()
