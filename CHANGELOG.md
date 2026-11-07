@@ -10,6 +10,16 @@ Hardening. Four pull requests; released when the last one lands.
 
 ### Added
 
+- Per-company rolling results are pruned: the store keeps them for the latest
+  `analysis.keep_ticker_rolling_sessions` sessions (default 30) plus each
+  month's last session; pooled results are never pruned. The daily
+  `correlations/rolling` file now holds pooled rows only, and a new monthly
+  `correlations/rolling_tickers` file holds the per-company snapshot as of each
+  month's last session (the current month's is rewritten daily). The year-one
+  store was 2.2 GB, 10 million of its rows this table.
+- A `vacuum` job (admin page: "Vacuum store") rebuilds the store file after a
+  prune, with SQLite's temp directory pointed at the data volume.
+- Tables inside a dataset may have their own cadence; the manifest says which.
 - The API, the scheduler and the worker are separate processes: `murmur serve
   --no-worker`, `murmur scheduler` and `murmur worker`, three services from
   one image in `docker-compose.yml`, each with its own health check (`murmur

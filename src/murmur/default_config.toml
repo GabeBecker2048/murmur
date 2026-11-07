@@ -31,6 +31,12 @@ model = "ProsusAI/finbert"
 batch_size = 32
 device = "cpu"                  # "cpu", "cuda" or "auto" (cuda if available)
 
+[analysis]
+# Per-company rolling results are large (100 companies x 4 horizons x 9 pairs x 3 lags x
+# 2 methods x sources, per session). Keep them for the latest N sessions plus each
+# month's last session; pooled results are kept forever and published daily.
+keep_ticker_rolling_sessions = 30
+
 [sec]
 # The SEC's fair-access policy requires a contact email in the User-Agent of
 # every request. Used once a month to fetch the public ticker/CIK list.

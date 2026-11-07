@@ -231,7 +231,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.7.2" in capsys.readouterr().out
+    assert "murmur 0.8.0" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):

@@ -81,6 +81,13 @@ class SentimentConfig:
 
 
 @dataclass(frozen=True)
+class AnalysisConfig:
+    keep_ticker_rolling_sessions: int
+    """Per-company rolling rows are kept for this many latest sessions (plus each month's
+    last session, kept forever); pooled rows are never pruned."""
+
+
+@dataclass(frozen=True)
 class SecConfig:
     contact: str
 
@@ -173,6 +180,7 @@ class Config:
     prices: PricesConfig
     keys: KeysConfig
     sentiment: SentimentConfig
+    analysis: AnalysisConfig
     sec: SecConfig
     universe: UniverseConfig
     index: IndexConfig
@@ -384,6 +392,11 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 batch_size=int(raw["sentiment"]["batch_size"]),
                 device=device,
             ),
+            analysis=AnalysisConfig(
+                keep_ticker_rolling_sessions=max(
+                    1, int(raw.get("analysis", {}).get("keep_ticker_rolling_sessions", 30))
+                )
+            ),
             sec=SecConfig(contact=str(raw.get("sec", {}).get("contact", ""))),
             universe=UniverseConfig(
                 source=str(universe["source"]),
@@ -480,6 +493,15 @@ SETTINGS_SCHEMA: list[dict] = [
         "type": "choice",
         "choices": list(DEVICES),
         "help": "cpu, cuda, or auto. The server image is CPU-only.",
+    },
+    {
+        "path": "analysis.keep_ticker_rolling_sessions",
+        "type": "integer",
+        "min": 1,
+        "help": (
+            "Sessions of per-company rolling results kept in the store (each month's last "
+            "session is kept forever; pooled results are never pruned)."
+        ),
     },
     {
         "path": "sec.contact",

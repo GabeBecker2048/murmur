@@ -43,6 +43,7 @@ JOB_TYPES = (
     "analyze",
     "export",
     "backup",
+    "vacuum",
     *sorted(DESTRUCTIVE),
 )
 BACKFILL_STAGES = ("news", "prices", "sentiment", "analyze", "export")
@@ -255,6 +256,30 @@ def _backup(store: Store, config: Config, params: dict) -> dict:
     for old in snapshots[:-keep] if keep > 0 else []:
         old.unlink()
     return {"file": str(dest), "bytes": dest.stat().st_size, "kept": min(len(snapshots), keep)}
+
+
+@handler("vacuum")
+def _vacuum(store: Store, config: Config, params: dict) -> dict:
+    """Rebuild the store file to reclaim space after a prune. SQLite needs a temp
+    directory that can hold the file: the container's /tmp is a small tmpfs, so point
+    it at the data volume for the duration."""
+    import os
+
+    tmp = config.data_dir / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    before = config.store_path.stat().st_size
+    previous = os.environ.get("SQLITE_TMPDIR")
+    os.environ["SQLITE_TMPDIR"] = str(tmp)
+    try:
+        report("vacuum", message=f"{before / 1e6:.0f} MB before")
+        store.vacuum()
+    finally:
+        if previous is None:
+            os.environ.pop("SQLITE_TMPDIR", None)
+        else:
+            os.environ["SQLITE_TMPDIR"] = previous
+    after = config.store_path.stat().st_size
+    return {"bytes_before": before, "bytes_after": after, "freed": before - after}
 
 
 @handler("delete_analysis")

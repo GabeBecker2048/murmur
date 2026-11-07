@@ -248,3 +248,63 @@ def test_deletions(store):
     assert len(store.unscored_articles("m")) == 2
     assert store.delete_universe_month("2026-11") == 2
     assert store.universe_month("2026-11") == []
+
+
+def test_prune_rolling_tickers_keeps_recent_and_month_ends(store):
+    def rows_for(as_of):
+        return [
+            (3, "day", "daily", 0, "all", "pooled", "", "pearson", 50, 0.1, 0.01, 0.0, 0.2, "t"),
+            (3, "day", "daily", 0, "all", "ticker", "AAPL", "pearson", 12, 0.2, 0.1, 0.0, 0.4, "t"),
+            (
+                3,
+                "day",
+                "daily",
+                0,
+                "all",
+                "ticker",
+                "MSFT",
+                "pearson",
+                12,
+                0.1,
+                0.3,
+                -0.1,
+                0.3,
+                "t",
+            ),
+        ]
+
+    days = [
+        "2026-09-28",
+        "2026-09-29",
+        "2026-09-30",  # September's last session
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-05",
+        "2026-10-06",
+    ]
+    for d in days:
+        store.replace_rolling(d, rows_for(d))
+    assert store.count("rolling_correlations") == 21
+    deleted = store.prune_rolling_tickers(keep_sessions=3)  # keep 10-02, 10-05, 10-06
+    # per-ticker rows dropped for 09-28, 09-29, 10-01 (3 sessions x 2 tickers); 09-30 kept
+    assert deleted == 6
+    kept = {
+        r["as_of"]
+        for r in store.conn.execute(
+            "SELECT DISTINCT as_of FROM rolling_correlations WHERE scope = 'ticker'"
+        )
+    }
+    assert kept == {"2026-09-30", "2026-10-02", "2026-10-05", "2026-10-06"}
+    pooled = {
+        r["as_of"]
+        for r in store.conn.execute(
+            "SELECT DISTINCT as_of FROM rolling_correlations WHERE scope = 'pooled'"
+        )
+    }
+    assert pooled == set(days)  # pooled history is never pruned
+    snap = store.rolling_month_snapshot("2026-09")
+    assert {r["ticker"] for r in snap} == {"AAPL", "MSFT"}
+    assert {r["as_of"] for r in snap} == {"2026-09-30"}
+    assert {r["as_of"] for r in store.rolling_month_snapshot("2026-10")} == {"2026-10-06"}
+    assert store.rolling_month_snapshot("2026-08") == []
+    assert store.prune_rolling_tickers(keep_sessions=3) == 0  # idempotent

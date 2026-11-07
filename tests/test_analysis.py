@@ -353,3 +353,34 @@ def test_per_source_correlations_once_two_sources_report(store, scorer, cfg):
     stored = store.correlations_on("2026-11-05")
     assert {r["source"] for r in stored} == {"all", "yahoo", "finnhub"}
     assert len(result.matched(source="all")) == 3
+
+
+def test_rolling_analysis_prunes_old_per_ticker_rows(store, cfg, tmp_path):
+    from murmur.clock import sessions_between
+    from murmur.config import load_config
+
+    user = tmp_path / "k.toml"
+    user.write_text(
+        cfg.source_path.read_text() + "\n[analysis]\nkeep_ticker_rolling_sessions = 2\n"
+    )
+    cfg2 = load_config(user, env={})
+    days = sessions_between(date(2026, 8, 1), date(2026, 11, 5))
+    seed_series(store, days, lead=1)
+    tickers = ["AAPL", "MSFT", "GOOGL", "META"]
+    for d in days[-4:]:
+        rolling_analysis(store, cfg2, d, tickers)
+    as_ofs = sorted(
+        r["as_of"]
+        for r in store.conn.execute(
+            "SELECT DISTINCT as_of FROM rolling_correlations WHERE scope = 'ticker'"
+        )
+    )
+    pooled = sorted(
+        r["as_of"]
+        for r in store.conn.execute(
+            "SELECT DISTINCT as_of FROM rolling_correlations WHERE scope = 'pooled'"
+        )
+    )
+    assert len(pooled) == 4  # pooled history complete
+    # the two latest sessions always; an older one only if it is its month's last session
+    assert pooled[-2:] == as_ofs[-2:] and len(as_ofs) <= 3
