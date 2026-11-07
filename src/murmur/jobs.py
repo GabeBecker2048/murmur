@@ -761,6 +761,11 @@ class Worker(threading.Thread):
             if job["type"] == "run":
                 last = store.last_run()
                 run_id = last["id"] if last else None
+            # Queue a scheduled run's retry BEFORE marking it failed: the scheduler ticks
+            # on its own thread or process, and between the two it would otherwise see a
+            # failed run with nothing active and queue an immediate attempt of its own.
+            if job["type"] == "run" and job["trigger"] == TRIGGER_SCHEDULE and status == "failed":
+                self._queue_retry(store, config, job, params)
             store.finish_job(
                 job_id,
                 status,
@@ -772,29 +777,27 @@ class Worker(threading.Thread):
             )
             self.live_log = None
             self.current_job_id = None
-        if job["type"] == "run" and job["trigger"] == TRIGGER_SCHEDULE and status == "failed":
-            retries = config.schedule.retries
-            if job["attempt"] <= retries:
-                from datetime import UTC
 
-                delay = timedelta(minutes=config.schedule.retry_delay_minutes)
-                not_before = (datetime.now(UTC) + delay).strftime("%Y-%m-%dT%H:%M:%SZ")
-                store.create_job(
-                    "run",
-                    {**params, "attempt": job["attempt"] + 1},
-                    TRIGGER_SCHEDULE,
-                    utc_now_iso(),
-                    day=job["day"],
-                    priority=SCHEDULE_PRIORITY,
-                    not_before=not_before,
-                    attempt=job["attempt"] + 1,
-                )
-                log.warning(
-                    "run for %s failed; retry %d queued for %s",
-                    job["day"],
-                    job["attempt"] + 1,
-                    not_before,
-                )
+    def _queue_retry(self, store: Store, config: Config, job, params: dict) -> None:
+        if job["attempt"] > config.schedule.retries:
+            return
+        from datetime import UTC
+
+        delay = timedelta(minutes=config.schedule.retry_delay_minutes)
+        not_before = (datetime.now(UTC) + delay).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.create_job(
+            "run",
+            {**params, "attempt": job["attempt"] + 1},
+            TRIGGER_SCHEDULE,
+            utc_now_iso(),
+            day=job["day"],
+            priority=SCHEDULE_PRIORITY,
+            not_before=not_before,
+            attempt=job["attempt"] + 1,
+        )
+        log.warning(
+            "run for %s failed; retry %d queued for %s", job["day"], job["attempt"] + 1, not_before
+        )
 
 
 def worker_main(provider: ConfigProvider, once: bool = False, poll_seconds: float = 5.0) -> int:

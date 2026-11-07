@@ -65,6 +65,11 @@ Hardening. Four pull requests; released when the last one lands.
   (the one-year backfill, 2026-11-06) the daily run was not queued until the
   queue drained and the heartbeat went stale. The tick now runs on its own
   timer, in its own process on the server.
+- A failed scheduled run's retry is queued before the run is marked failed, so
+  a concurrent scheduler tick can no longer add an immediate extra attempt.
+- Store migrations are serialised by a lock file, so services opening a new or
+  older store at the same moment cannot apply a migration twice; the scheduler
+  creates or migrates the store when it starts.
 
 ## [0.7.2] - 2026-11-06
 

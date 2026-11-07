@@ -437,3 +437,36 @@ def test_backup_job_writes_finished_snapshots_and_keeps_n(provider):
     files = sorted(p.name for p in cfg.backups_dir.iterdir())
     assert len(files) == 2 and all(f.endswith(".sqlite") for f in files)
     assert out["kept"] == 2
+
+
+def test_retry_is_queued_before_the_failed_run_is_finished(provider, monkeypatch):
+    """The scheduler ticks concurrently: it must never see a failed scheduled run with
+    nothing active, or it queues an immediate extra attempt (seen once in CI)."""
+    cfg = provider.get()
+    monkeypatch.setitem(jobs.HANDLERS, "run", lambda *a: (_ for _ in ()).throw(RuntimeError("x")))
+    seen = []
+    original = Store.finish_job
+
+    def spy(self, job_id, status, *a, **kw):
+        if status == "failed":
+            seen.append([r["status"] for r in self.run_jobs_for_day("2026-11-05")])
+        return original(self, job_id, status, *a, **kw)
+
+    monkeypatch.setattr(Store, "finish_job", spy)
+    with Store(cfg.store_path) as s:
+        s.create_job(
+            "run",
+            {"date": "2026-11-05", "trigger": "schedule", "attempt": 1},
+            "schedule",
+            "2020-01-01T00:00:00Z",
+            day="2026-11-05",
+        )
+    worker = jobs.Worker(provider, scheduler=False, poll_seconds=0.05)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        worker.stop()
+    assert seen and seen[0] == ["running", "queued"]  # the retry existed while attempt 1 still ran
