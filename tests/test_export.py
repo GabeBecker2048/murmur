@@ -93,7 +93,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert set(companies["first_month"]) == {"2026-11"}
 
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.7.2"
+    assert index["murmur_version"] == "0.8.0"
     assert list(index["datasets"]) == [
         "companies",
         "m100",
@@ -237,15 +237,26 @@ def test_rolling_table_and_leadlag_chart(store, scorer, cfg):  # noqa: F811
     names = {p.name for p in written}
     assert {"20261105.rolling.parquet", "20261105.leadlag.png"} <= names
     df = pd.read_parquet(cfg.published_dir / "correlations/2026/11/05/20261105.rolling.parquet")
-    assert set(df["months"]) == {1, 3, 6, 12} and set(df["scope"]) == {"pooled", "ticker"}
+    assert set(df["months"]) == {1, 3, 6, 12} and set(df["source"]) == {"all"}
     assert list(df.columns)[:5] == ["as_of", "months", "window", "return_type", "lag"]
-    assert "cik" in df.columns
+    assert "scope" not in df.columns and "ticker" not in df.columns  # pooled only, daily
+    # per-company rolling results are a monthly snapshot table in the same dataset
+    tickers = pd.read_parquet(
+        cfg.published_dir / "correlations/2026/11/202611.rolling_tickers.parquet"
+    )
+    assert set(tickers["as_of"]) == {"2026-11-05"} and set(tickers["ticker"]) >= {"AAPL", "MSFT"}
+    assert "cik" in tickers.columns and "scope" not in tickers.columns
+    assert len(tickers) + len(df) == len(store.rolling_on("2026-11-05"))
     png = cfg.published_dir / "correlations/2026/11/05/20261105.leadlag.png"
     assert png.stat().st_size > 5000
     index = json.loads((cfg.published_dir / "index.json").read_text())
     files = {e["path"]: e for e in index["datasets"]["correlations"]["files"]}
     assert files["correlations/2026/11/05/20261105.leadlag.png"]["table"] == "charts"
     assert files["correlations/2026/11/05/20261105.rolling.parquet"]["rows"] == len(df)
+    assert files["correlations/2026/11/202611.rolling_tickers.parquet"]["date"] == "2026-11"
+    tables = index["datasets"]["correlations"]["tables"]
+    assert tables["rolling"]["cadence"] == "daily"
+    assert tables["rolling_tickers"]["cadence"] == "monthly"
 
 
 def test_rebuild_month_drops_deleted_rows(store, scorer, cfg):  # noqa: F811
@@ -322,7 +333,7 @@ def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
     assert daily["murmur_dataset"] == "prices" and daily["murmur_table"] == "prices"
     assert daily["license"].startswith("Source terms apply") and "yfinance" in daily["attribution"]
     assert (
-        "no rights" in daily["notice"] and daily["contact"] and daily["murmur_version"] == "0.7.2"
+        "no rights" in daily["notice"] and daily["contact"] and daily["murmur_version"] == "0.8.0"
     )
     assert daily["murmur_period"] == "2026-11-05" and daily["murmur_generated_at"].endswith("Z")
     monthly = read_metadata(base / "m100/2026/11/202611.constituents.parquet")

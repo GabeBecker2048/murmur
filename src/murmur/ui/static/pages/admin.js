@@ -85,6 +85,7 @@ async function renderJobs(ctx) {
     el("button", { class: "btn", type: "button", onclick: () => run({ type: "export", params: { all: true } }, "Full export queued") }, "Rebuild published files"),
     el("button", { class: "btn", type: "button", onclick: () => run({ type: "backup", params: { keep: 7 } }, "Backup queued") }, "Backup store"),
     el("button", { class: "btn", type: "button", onclick: () => run({ type: "universe", params: { rebuild: true } }, "Index rebuild queued") }, "Rebuild this month's index"),
+    el("button", { class: "btn", type: "button", onclick: () => run({ type: "vacuum", params: {} }, "Vacuum queued (reclaims space after pruning; minutes)") }, "Vacuum store"),
   );
   const msg = el("div", { class: "help" });
   async function run(body, ok) {

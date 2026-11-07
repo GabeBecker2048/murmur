@@ -169,7 +169,13 @@ are gitignored.
   format, rows, bytes, modified}`). `rebuild_month` regenerates from the store. A table
   with no rows is not written. CSV is never stored: `api.app.PublishedFiles` converts a
   `.parquet` URL with `?format=csv` on request. Every company row carries `cik` + `ticker`
-  (`store.ticker_ciks()`). `publish.py` owns the license notices (`cc_by`, `cc_by_scored` for the tables with
+  (`store.ticker_ciks()`). A `Table` may carry its own `cadence` (the monthly
+  `rolling_tickers` snapshot lives inside the daily `correlations` dataset; `table_cadence()`
+  decides which loop writes it). The daily `rolling` table is pooled rows only; per-ticker
+  rolling rows are pruned by `store.prune_rolling_tickers` after each `rolling_analysis`
+  (`analysis.keep_ticker_rolling_sessions`, month-end sessions kept) and the `vacuum` job
+  reclaims the file space (SQLITE_TMPDIR on /data: the container's /tmp is a small tmpfs).
+  `publish.py` owns the license notices (`cc_by`, `cc_by_scored` for the tables with
   FinBERT scores, `source_terms` for prices), the footer metadata every file gets (`file_metadata`, written by
   `_write_frame`, kept through compaction, read back with `read_metadata`) and the rounding of
   caps/weights (`round_cap` 3 s.f., `round_weight` 4 dp, `public()` on API responses). `/data`

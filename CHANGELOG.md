@@ -4,6 +4,23 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.8.0] - Unreleased
+
+Hardening. Four pull requests; released when the last one lands.
+
+### Added
+
+- Per-company rolling results are pruned: the store keeps them for the latest
+  `analysis.keep_ticker_rolling_sessions` sessions (default 30) plus each
+  month's last session; pooled results are never pruned. The daily
+  `correlations/rolling` file now holds pooled rows only, and a new monthly
+  `correlations/rolling_tickers` file holds the per-company snapshot as of each
+  month's last session (the current month's is rewritten daily). The year-one
+  store was 2.2 GB, 10 million of its rows this table.
+- A `vacuum` job (admin page: "Vacuum store") rebuilds the store file after a
+  prune, with SQLite's temp directory pointed at the data volume.
+- Tables inside a dataset may have their own cadence; the manifest says which.
+
 ## [0.7.2] - 2026-11-06
 
 Licensing made explicit, and prices published.

@@ -44,6 +44,7 @@ def job_types():
             "analyze": ["date", "all"],
             "export": ["date", "all", "month"],
             "backup": ["keep"],
+            "vacuum": [],
             "delete_analysis": ["date"],
             "delete_scores": ["model"],
             "delete_universe_month": ["month"],

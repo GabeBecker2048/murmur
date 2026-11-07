@@ -974,6 +974,52 @@ class Store:
             )
         return len(rows)
 
+    def prune_rolling_tickers(self, keep_sessions: int) -> int:
+        """Delete per-ticker rolling rows older than the ``keep_sessions`` most recent
+        sessions, except each month's last session (kept forever for the monthly
+        snapshot files). Pooled rows are never touched. Returns rows deleted."""
+        with self.conn:
+            self.conn.execute("BEGIN")
+            cutoff = self.conn.execute(
+                """SELECT min(as_of) FROM (
+                     SELECT DISTINCT as_of FROM rolling_correlations
+                     ORDER BY as_of DESC LIMIT ?)""",
+                (max(1, keep_sessions),),
+            ).fetchone()[0]
+            if cutoff is None:
+                return 0
+            return self.conn.execute(
+                """DELETE FROM rolling_correlations
+                   WHERE scope = 'ticker' AND as_of < ?
+                     AND as_of NOT IN (SELECT max(as_of) FROM rolling_correlations
+                                       GROUP BY substr(as_of, 1, 7))""",
+                (cutoff,),
+            ).rowcount
+
+    def rolling_month_snapshot(self, month: str) -> list[sqlite3.Row]:
+        """Per-ticker rolling rows as of the last session of ``month`` that has any
+        (the month's end-of-month snapshot; for the current month, the latest so far)."""
+        as_of = self.conn.execute(
+            "SELECT max(as_of) FROM rolling_correlations WHERE substr(as_of, 1, 7) = ?",
+            (month,),
+        ).fetchone()[0]
+        if as_of is None:
+            return []
+        return self.conn.execute(
+            """SELECT as_of, months, window, return_type, lag, source, scope, ticker, method, n,
+                      estimate, p_value, ci_low, ci_high, computed_at
+               FROM rolling_correlations WHERE as_of = ? AND scope = 'ticker'
+               ORDER BY months, window, return_type, lag, source, ticker, method""",
+            (as_of,),
+        ).fetchall()
+
+    def vacuum(self) -> None:
+        """Rebuild the database file to reclaim space. Needs free disk up to the file's
+        size and a temp directory (``SQLITE_TMPDIR``) that can hold it. In WAL mode the
+        rebuilt pages sit in the WAL until a checkpoint, so one follows."""
+        self.conn.execute("VACUUM")
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def rolling_on(self, as_of: str) -> list[sqlite3.Row]:
         return self.conn.execute(
             """SELECT as_of, months, window, return_type, lag, source, scope, ticker, method, n,
