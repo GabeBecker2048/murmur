@@ -121,9 +121,10 @@ def heartbeat_writer(config: Config) -> Callable[[], None]:
 UTC_ZONE = ZoneInfo("UTC")
 
 
-def heartbeat_age_seconds(config: Config) -> float | None:
+def heartbeat_age_seconds(config: Config, path=None) -> float | None:
+    path = path or config.heartbeat_path
     try:
-        stamp = datetime.fromisoformat(config.heartbeat_path.read_text().strip())
+        stamp = datetime.fromisoformat(path.read_text().strip())
     except (OSError, ValueError):
         return None
     return (datetime.now(UTC_ZONE) - stamp).total_seconds()

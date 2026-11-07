@@ -122,12 +122,24 @@ curl -s -X POST localhost:8100/api/v1/jobs -H "Authorization: Bearer $MURMUR_API
 
 ### The daily job and the job queue
 
-`murmur serve` is the process: it serves the API and runs one worker thread
-that executes **jobs** one at a time. The daily run is a job the worker queues
-itself at 18:00 Eastern (every day, weekends included); a failed run is
-re-queued after 20 minutes, up to 3 times. If the process starts after the
-slot and the day has no successful run yet, the run is queued immediately, so
-a restart never loses a day.
+Three processes share one image and one data directory (0.8.0): `murmur
+serve` is the API and the dashboard, `murmur scheduler` queues the daily run
+on its own clock, and `murmur worker` is the only process that executes
+**jobs**, one at a time (it is also the only process that runs FinBERT).
+Exactly one worker per store: SQLite has one writer. Each process has its own
+health check (the API answers HTTP, the other two write a heartbeat file every
+10 seconds that `murmur health --role scheduler|worker` reads), so the
+dashboard restarting never interrupts a job, and the scheduler never waits for
+a busy worker. `murmur serve` without flags still runs all three in one
+process for a laptop.
+
+The daily run is a job the scheduler queues at 18:00 Eastern (every day,
+weekends included); a failed run is re-queued after 20 minutes, up to 3 times.
+If the scheduler starts after the slot and the day has no successful run yet,
+the run is queued immediately, so a restart never loses a day. A worker
+restart marks the job it was running `interrupted` and re-queues it when the
+job is safe to repeat (backfills, analysis, exports, fetches); queued jobs are
+kept.
 
 With `schedule.analysis_time` set (for a price source whose bar for a day is
 not available at 18:00, like Polygon's free plan) the day splits into two slots: at
@@ -149,7 +161,7 @@ all, or rebuild a month), `backup`, and the destructive
 `delete_analysis`, `delete_scores` and `delete_universe_month`, which need
 `confirm: true`. A job reports progress, keeps a log you can tail, and can be
 cancelled. `murmur schedule` still exists as a scheduler-only fallback with
-no HTTP.
+no HTTP and no jobs.
 
 ### Windows and returns
 
@@ -274,8 +286,12 @@ uv run murmur analyze                  # scores pending headlines, then the day'
 uv run murmur analyze --all            # recompute every day (after a schema change)
 uv run murmur export
 uv run murmur runs                     # recent runs and which stage failed
-uv run murmur serve                    # the API + daily job + job worker (the server's main process)
-uv run murmur schedule                 # the scheduler alone, no HTTP (fallback)
+uv run murmur serve                    # the API + UI, plus the scheduler and the worker in-process
+uv run murmur serve --no-worker        # the API + UI only (the server's `murmur` service)
+uv run murmur scheduler                # queues the daily run(s); --once ticks and exits
+uv run murmur worker                   # runs jobs, one at a time; --once drains the queue and exits
+uv run murmur health --role worker     # exit 0 if that process's heartbeat is fresh (api|scheduler|worker)
+uv run murmur schedule                 # the pre-0.6.0 scheduler loop alone, no HTTP (fallback)
 uv run murmur -v run                   # debug logging
 ```
 
@@ -415,12 +431,15 @@ the image, pushes it to `ghcr.io/gabebecker2048/murmur` as `X.Y.Z` and
 requests and merges only build and smoke-test the image.
 
 The server pulls `latest` every morning, so a release is what deploys.
-`docker-compose.yml` is written for the server's conventions: a stack
-directory with `./data` (store, exports, API-written settings, Hugging Face
-cache) and `./config/murmur.toml` (ops overrides, may be empty, read-only),
-uid 1000, read-only root filesystem, port 8100 on the LAN, a 60 s stop grace
-period for a job in flight, and `.env` holding `MURMUR_API_TOKEN` and the
-source keys.
+`docker-compose.yml` runs three services from the one image, `murmur` (the API
+and UI, port 8100 on the LAN, 512 MB), `murmur-scheduler` (256 MB) and
+`murmur-worker` (2 GB, a 60 s stop grace period for a job in flight), and is
+written for the server's conventions: a stack directory with `./data` (store,
+exports, API-written settings, heartbeats, Hugging Face cache) and
+`./config/murmur.toml` (ops overrides, may be empty, read-only), uid 1000,
+read-only root filesystems, and `.env` holding `MURMUR_API_TOKEN` and the
+source keys. Each service has its own health check; the scheduler and worker
+wait for the API to be healthy because it creates and migrates the store.
 
 ```bash
 mkdir -p ~/murmur/data ~/murmur/config && cd ~/murmur
@@ -428,7 +447,7 @@ touch config/murmur.toml                      # or set overrides
 curl -O https://raw.githubusercontent.com/GabeBecker2048/murmur/main/docker-compose.yml
 docker login ghcr.io -u <github user>            # once; the package is private
 docker compose pull && docker compose up -d
-docker compose logs -f                        # first run downloads FinBERT into ./data/hf-cache
+docker compose logs -f murmur-worker          # first job downloads FinBERT into ./data/hf-cache
 docker compose exec murmur murmur runs        # the run log
 ```
 

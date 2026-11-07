@@ -1,61 +1,106 @@
 # Murmur on gabe-server. Lives at /home/gabe/murmur/ with:
-#   ./data/            the store, exports, settings.toml (edited via the API), heartbeat,
+#   ./data/            the store, exports, settings.toml (edited via the API), heartbeats,
 #                      job backups and the Hugging Face cache (bind mount)
 #   ./config/murmur.toml   ops overrides over the packaged defaults (may be empty; read-only)
-# The image is pulled from ghcr.io (built by .github/workflows/image.yml), so
+# One image, three services (0.8.0): the API + UI, the scheduler (queues the daily run
+# on its own clock, so a long job never delays it) and the worker (the only process that
+# runs jobs and FinBERT). Exactly one worker per store: SQLite is single-writer.
+# The image is pulled from ghcr.io (built by .github/workflows/release.yml), so
 # docker-autopatch keeps it updated; `docker compose build` works too.
 name: murmur
 
+x-murmur: &murmur
+  image: ghcr.io/gabebecker2048/murmur:latest
+  build: .
+  restart: unless-stopped
+  user: "1000:1000"
+  # Secrets live in ./.env, never committed (the collect script strips it to .env.example):
+  #   MURMUR_API_TOKEN          bearer token for POST/PUT/DELETE; writes are refused without it
+  #   MURMUR_FINNHUB_API_KEY, MURMUR_POLYGON_API_KEY   optional sources
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # The schedule fires at config `timezone` (America/New_York) regardless of
+    # TZ; TZ only affects log timestamps.
+    TZ: America/New_York
+    MURMUR_DATA_DIR: /data
+    MURMUR_CONFIG: /config/murmur.toml
+    HF_HOME: /data/hf-cache
+  volumes:
+    - type: bind
+      source: ./data
+      target: /data
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ./config
+      target: /config
+      read_only: true
+      bind:
+        create_host_path: false
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   murmur:
-    image: ghcr.io/gabebecker2048/murmur:latest
-    build: .
+    <<: *murmur
     container_name: murmur
-    restart: unless-stopped
-    user: "1000:1000"
-    # The API (and /docs) on the LAN. A Caddy hostname comes with the web UI.
+    command: ["murmur", "serve", "--no-worker"]
+    # The API (and /docs) on the LAN; murmur.gabe.beer routes here through Caddy.
     ports:
       - "8100:8100"
+    healthcheck:
+      test: ["CMD", "murmur", "health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    mem_limit: 512m
+    cpus: 1.0
+
+  murmur-scheduler:
+    <<: *murmur
+    container_name: murmur-scheduler
+    command: ["murmur", "scheduler"]
+    depends_on:
+      murmur:
+        condition: service_healthy   # the API creates and migrates the store first
+    healthcheck:
+      test: ["CMD", "murmur", "health", "--role", "scheduler"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+    mem_limit: 256m
+    cpus: 0.5
+
+  murmur-worker:
+    <<: *murmur
+    container_name: murmur-worker
+    command: ["murmur", "worker"]
+    depends_on:
+      murmur:
+        condition: service_healthy
     # A job in flight (FinBERT on a chunk of headlines) needs a moment to stop cleanly.
     stop_grace_period: 60s
-    # Secrets live in ./.env, never committed (the collect script strips it to .env.example):
-    #   MURMUR_API_TOKEN          bearer token for POST/PUT/DELETE; writes are refused without it
-    #   MURMUR_FINNHUB_API_KEY, MURMUR_POLYGON_API_KEY   optional sources
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      # The schedule fires at config `timezone` (America/New_York) regardless of
-      # TZ; TZ only affects log timestamps.
-      TZ: America/New_York
-      MURMUR_DATA_DIR: /data
-      MURMUR_CONFIG: /config/murmur.toml
-      HF_HOME: /data/hf-cache
-    volumes:
-      - type: bind
-        source: ./data
-        target: /data
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./config
-        target: /config
-        read_only: true
-        bind:
-          create_host_path: false
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "murmur", "health", "--role", "worker"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
     # Measured on the 2026-11-05 run with 100 tickers (see README "Deploy"):
     # FinBERT on CPU peaks around 1.0 GB RSS (994 MB). 6 shared cores on the server.
     mem_limit: 2g
     cpus: 3.0
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"

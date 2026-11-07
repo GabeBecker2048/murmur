@@ -182,7 +182,7 @@ def test_scheduler_tick_queues_the_daily_run_and_retries(provider, monkeypatch):
         worker.stop()
 
 
-def test_boot_marks_stale_jobs(provider):
+def test_boot_marks_stale_jobs_and_keeps_the_queue(provider, sleep_job):
     cfg = provider.get()
     old = "2020-01-01T00:00:00Z"  # created and started before this process booted
     with Store(cfg.store_path) as s:
@@ -194,7 +194,8 @@ def test_boot_marks_stale_jobs(provider):
     try:
         worker.ready.wait(5)
         with Store(cfg.store_path) as s:
-            assert s.job_status(a) == "interrupted" and s.job_status(b) == "cancelled"
+            assert s.job_status(a) == "interrupted"  # sleep is not RESUMABLE: no re-queue
+        assert wait_for(cfg.store_path, b, {"done"}) == "done"  # queued jobs survive a restart
     finally:
         worker.stop()
 
@@ -316,6 +317,87 @@ def test_backfill_validation():
     assert clean == {"date": "2026-11-05", "kind": "analyze"}
     with pytest.raises(jobs.JobError, match="kind"):
         jobs.validate("run", {"kind": "nope"}, False)
+
+
+def test_tick_runs_while_a_job_is_busy(provider, sleep_job, monkeypatch):
+    """The scheduler must queue the daily run even when the worker is mid-job (0.7.x
+    only ticked when idle, so a long backfill silently delayed the run)."""
+    cfg = provider.get()
+    sleep_job["steps"] = 40
+    sleep_job["delay"] = 0.1  # ~4 s job
+    monkeypatch.setitem(jobs.HANDLERS, "run", lambda *a: {})
+    clock = {"now": datetime(2026, 11, 5, 17, 59, tzinfo=ET)}
+    worker = jobs.Worker(provider, scheduler=True, tick_seconds=0.1, now=lambda: clock["now"])
+    worker.start()
+    worker.ready.wait(5)
+    try:
+        with Store(cfg.store_path) as s:
+            sleep_id = jobs.enqueue(s, "sleep", {})
+        assert wait_for(cfg.store_path, sleep_id, {"running"}) == "running"
+        clock["now"] = datetime(2026, 11, 5, 18, 0, 30, tzinfo=ET)  # slot passes mid-job
+        deadline = time.monotonic() + 3
+        rows = []
+        while time.monotonic() < deadline:
+            with Store(cfg.store_path) as s:
+                rows = s.run_jobs_for_day("2026-11-05")
+            if rows:
+                break
+            time.sleep(0.05)
+        with Store(cfg.store_path) as s:
+            assert rows and rows[0]["status"] == "queued"  # queued while the sleep job runs
+            assert s.job_status(sleep_id) == "running"
+            assert cfg.worker_heartbeat_path.exists() and cfg.heartbeat_path.exists()
+    finally:
+        worker.stop()
+
+
+def test_scheduler_loop_once_and_tick_function(provider, monkeypatch):
+    cfg = provider.get()
+    stop = threading.Event()
+    now = datetime(2026, 11, 5, 18, 5, tzinfo=ET)
+    assert jobs.scheduler_loop(provider, stop, tick_seconds=0.01, now=lambda: now, once=True) == 1
+    with Store(cfg.store_path) as s:
+        rows = s.run_jobs_for_day("2026-11-05")
+    assert [r["status"] for r in rows] == ["queued"]
+    assert cfg.heartbeat_path.exists()
+    assert jobs.tick(provider, now) == []  # a second tick does not queue a duplicate
+
+
+def test_worker_main_once_drains_the_queue(provider, sleep_job):
+    cfg = provider.get()
+    with Store(cfg.store_path) as s:
+        a = jobs.enqueue(s, "sleep", {})
+        b = s.create_job("sleep", {"second": True}, "api", "2026-01-01T00:00:00Z")
+    assert jobs.worker_main(provider, once=True, poll_seconds=0.05) == 0
+    with Store(cfg.store_path) as s:
+        assert s.job_status(a) == "done" and s.job_status(b) == "done"
+        assert s.next_queued() is None
+
+
+def test_interrupted_resumable_jobs_are_requeued_on_boot(provider):
+    cfg = provider.get()
+    with Store(cfg.store_path) as s:
+        bf = s.create_job(
+            "backfill",
+            {"from": "2026-10-01", "to": "2026-10-31", "stages": ["prices"]},
+            "api",
+            "2020-01-01T00:00:00Z",
+        )
+        s.start_job(bf, "2020-01-01T00:00:01Z")
+        run = s.create_job("run", {"date": "2026-11-05"}, "schedule", "2020-01-01T00:00:00Z")
+        s.start_job(run, "2020-01-01T00:00:01Z")
+    worker = jobs.Worker(provider, scheduler=False, poll_seconds=0.05)
+    worker.start()
+    worker.ready.wait(5)
+    try:
+        with Store(cfg.store_path) as s:
+            assert s.job_status(bf) == "interrupted" and s.job_status(run) == "interrupted"
+            # the worker may already be running the re-queued job, so match any status
+            rows = [r for r in s.jobs(limit=10)[0] if r["trigger"] == "restart"]
+            assert [r["type"] for r in rows] == ["backfill"]
+            assert json.loads(rows[0]["params"])["from"] == "2026-10-01"
+    finally:
+        worker.stop()
 
 
 def test_vacuum_job_reclaims_space(provider):

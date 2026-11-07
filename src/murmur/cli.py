@@ -57,12 +57,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     e = add("export", "write the day's published files")
     e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
-    add("serve", "HTTP API + scheduler + job worker (the container's main process)", dated=False)
-    add("schedule", "the scheduler alone, no HTTP (fallback)", dated=False)
+    sv = add(
+        "serve", "the HTTP API + UI; by default also the scheduler and the job worker", dated=False
+    )
+    sv.add_argument(
+        "--no-worker", action="store_true", help="API only: jobs run in `murmur worker`"
+    )
+    sv.add_argument("--no-scheduler", action="store_true", help="no scheduler tick in this process")
+    w = add("worker", "the job worker process (exactly one per store)", dated=False)
+    w.add_argument("--once", action="store_true", help="drain the queue, then exit")
+    sch = add("scheduler", "the scheduler process: queues the daily run(s)", dated=False)
+    sch.add_argument("--once", action="store_true", help="one tick, then exit")
+    add("schedule", "(legacy) the pre-0.6.0 scheduler loop, no HTTP, no jobs", dated=False)
     r = add("runs", "list recent runs", dated=False)
     r.add_argument("--limit", type=int, default=20)
-    h = add("health", "exit 0 if the running server reports healthy", dated=False)
-    h.add_argument("--file", action="store_true", help="check the heartbeat file instead of HTTP")
+    h = add("health", "exit 0 if the running service reports healthy", dated=False)
+    h.add_argument(
+        "--role",
+        choices=("api", "scheduler", "worker"),
+        default="api",
+        help="api = GET /api/v1/health; scheduler/worker = that process's heartbeat file age",
+    )
+    h.add_argument("--file", action="store_true", help="alias for --role scheduler")
     return parser
 
 
@@ -93,16 +109,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.debug("config from %s, data_dir %s", config.source_path or "defaults", config.data_dir)
 
     if args.command == "health":
-        if args.file:
+        role = "scheduler" if args.file else args.role
+        if role != "api":
             from murmur.scheduler import heartbeat_age_seconds
 
-            age = heartbeat_age_seconds(config)
+            path = config.heartbeat_path if role == "scheduler" else config.worker_heartbeat_path
+            age = heartbeat_age_seconds(config, path)
             fresh = age is not None and age < HEALTH_MAX_AGE
-            print(f"heartbeat {'fresh' if fresh else 'stale or missing'} ({age and round(age)}s)")
+            if age is None:
+                print(f"{role} heartbeat missing ({path})")
+            else:
+                print(f"{role} heartbeat {'fresh' if fresh else 'stale'} ({round(age)}s)")
             return 0 if fresh else 1
         return health_http(config)
     if args.command == "serve":
-        return serve_http(args.config)
+        return serve_http(args.config, worker=not args.no_worker, scheduler=not args.no_scheduler)
+    if args.command == "worker":
+        from murmur.config import ConfigProvider
+        from murmur.jobs import worker_main
+
+        return worker_main(ConfigProvider(args.config), once=args.once)
+    if args.command == "scheduler":
+        from murmur.config import ConfigProvider
+        from murmur.jobs import scheduler_main
+
+        return scheduler_main(ConfigProvider(args.config), once=args.once)
     if args.command == "schedule":
         from murmur.scheduler import serve
 
@@ -202,7 +233,7 @@ def health_http(config) -> int:
         return 1
 
 
-def serve_http(config_path: str | None) -> int:
+def serve_http(config_path: str | None, worker: bool = True, scheduler: bool = True) -> int:
     import uvicorn
 
     from murmur.api.app import create_app
@@ -210,7 +241,7 @@ def serve_http(config_path: str | None) -> int:
 
     provider = ConfigProvider(config_path)
     config = provider.get()
-    app = create_app(provider)
+    app = create_app(provider, run_worker=worker, run_scheduler=scheduler and worker)
     uvicorn.run(app, host=config.api.host, port=config.api.port, log_level="info", access_log=False)
     return 0
 

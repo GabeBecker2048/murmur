@@ -55,9 +55,9 @@ def test_cancel_and_interrupt(store):
     a = store.create_job("news", {"a": 3}, "api", "t0")
     b = store.create_job("news", {"a": 4}, "api", "t0")
     store.start_job(a, "t4")
-    assert store.mark_interrupted("t5") == 1
+    assert [r["id"] for r in store.mark_interrupted("t5")] == [a]
     assert store.job_status(a) == "interrupted"
-    assert store.job_status(b) == "cancelled" and store.job(b)["error"] == "dropped on restart"
+    assert store.job_status(b) == "queued"  # queued jobs survive a worker restart
     assert store.run_jobs_for_day("2026-11-05") == []
 
 

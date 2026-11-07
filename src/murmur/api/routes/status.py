@@ -26,18 +26,54 @@ def _job_row(row) -> dict | None:
     return out
 
 
-@router.get("/health")
-def health(worker: Worker | None = Depends(get_worker), store: Store = Depends(get_store)):
-    store.conn.execute("SELECT 1")
-    problems = []
+def services(config: Config, worker: Worker | None) -> dict:
+    """Liveness of the scheduler and the worker from their heartbeat files (the split
+    deployment) or from the in-process thread (single-process ``murmur serve``)."""
+    from murmur.jobs import STALE_SECONDS
+    from murmur.scheduler import heartbeat_age_seconds
+
+    sched_age = heartbeat_age_seconds(config, config.heartbeat_path)
+    work_age = heartbeat_age_seconds(config, config.worker_heartbeat_path)
+    out = {
+        "mode": "single-process" if worker is not None else "split",
+        "scheduler": {
+            "heartbeat_age": None if sched_age is None else round(sched_age),
+            "ok": sched_age is not None and sched_age < STALE_SECONDS,
+        },
+        "worker": {
+            "heartbeat_age": None if work_age is None else round(work_age),
+            "ok": work_age is not None and work_age < STALE_SECONDS,
+        },
+    }
     if worker is not None:
-        if not worker.is_alive():
-            problems.append("worker thread is dead" + (f": {worker.error}" if worker.error else ""))
-        elif worker.scheduler and worker.last_tick is None and worker.current_job_id is None:
-            problems.append("scheduler has not ticked yet")
-    if problems:
-        raise HTTPException(503, "; ".join(problems))
-    return {"ok": True, "version": __version__, "time": utc_now_iso()}
+        out["worker"]["thread_alive"] = worker.is_alive()
+        out["worker"]["error"] = worker.error
+        out["worker"]["ok"] = worker.is_alive() and out["worker"]["ok"]
+        if not worker.scheduler:
+            out["scheduler"]["ok"] = out["scheduler"]["ok"]  # an external scheduler may exist
+    return out
+
+
+@router.get("/health")
+def health(
+    worker: Worker | None = Depends(get_worker),
+    store: Store = Depends(get_store),
+    config: Config = Depends(get_config),
+):
+    """503 when the store is unreachable or an in-process worker thread died. In the split
+    deployment the scheduler and worker containers have their own health checks; their
+    heartbeat ages are reported here but do not fail the API's own check."""
+    store.conn.execute("SELECT 1")
+    if worker is not None and not worker.is_alive():
+        raise HTTPException(
+            503, "worker thread is dead" + (f": {worker.error}" if worker.error else "")
+        )
+    return {
+        "ok": True,
+        "version": __version__,
+        "time": utc_now_iso(),
+        "services": services(config, worker),
+    }
 
 
 @router.get("/status")
@@ -47,9 +83,10 @@ def status(
     worker: Worker | None = Depends(get_worker),
 ):
     usage = shutil.disk_usage(config.data_dir) if config.data_dir.exists() else None
+    svc = services(config, worker)
     db = config.store_path
     wal = db.with_name(db.name + "-wal")
-    running = store.job(worker.current_job_id) if worker and worker.current_job_id else None
+    running = store.running_job()
     return {
         "version": __version__,
         "schema": SCHEMA_VERSION,
@@ -73,10 +110,15 @@ def status(
             "writes_enabled": bool(config.api.token),
         },
         "worker": {
-            "alive": bool(worker and worker.is_alive()),
-            "scheduler": bool(worker and worker.scheduler),
+            "alive": svc["worker"]["ok"],
+            "scheduler": svc["scheduler"]["ok"],
             "last_tick": worker.last_tick if worker else None,
             "error": worker.error if worker else None,
+            "mode": svc["mode"],
+            "heartbeats": {
+                "scheduler": svc["scheduler"]["heartbeat_age"],
+                "worker": svc["worker"]["heartbeat_age"],
+            },
         },
         "running_job": _job_row(running),
         "next_queued_job": _job_row(store.next_queued()),
