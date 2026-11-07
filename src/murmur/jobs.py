@@ -834,6 +834,8 @@ def scheduler_main(provider: ConfigProvider, once: bool = False, tick_seconds: f
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     config = provider.get()
+    with Store(config.store_path):  # create or migrate the store before the first tick
+        pass
     log.info(
         "scheduler: slots %s in %s, %d retries %d min apart",
         config.schedule.slots,

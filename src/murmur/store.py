@@ -392,6 +392,20 @@ class Store:
         return self.conn.execute("PRAGMA user_version").fetchone()[0]
 
     def _migrate(self) -> None:
+        if self.schema_version == SCHEMA_VERSION:
+            return
+        if self.path is None:
+            self._apply_migrations()
+            return
+        # Several services may open a new or older store at once (api, scheduler,
+        # worker). A lock file serialises them; the version is re-read inside it.
+        import fcntl
+
+        with open(self.path.with_name(self.path.name + ".migrate.lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._apply_migrations()
+
+    def _apply_migrations(self) -> None:
         current = self.schema_version
         if current > SCHEMA_VERSION:
             raise RuntimeError(
