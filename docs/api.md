@@ -116,6 +116,16 @@ The constituents in force for a month (or on a date), with rank and weight.
 | `date` | query | string or null |  |
 | `month` | query | string or null |  |
 
+### `GET /api/v1/index/{name}/benchmark`
+
+Daily closes of the comparison index (``index.benchmark``, the S&P 500 by default) between ``from`` and ``to``, for drawing against the level. Not part of the published data; ``symbol`` is null and ``items`` empty when no benchmark is configured.
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `name` | path | string |  |
+| `from` | query | string or null |  |
+| `to` | query | string or null |  |
+
 ### `GET /api/v1/index/{name}/changes`
 
 Companies added to and removed from the index in a month (default: the latest).

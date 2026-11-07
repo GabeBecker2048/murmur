@@ -54,6 +54,11 @@ size = 100
 # earliest index month on record.
 base_date = ""
 base_level = 1000
+# The comparison line on the index page's chart: a Yahoo symbol (^GSPC = the
+# S&P 500) and its label. Empty benchmark = no line. Its closes are fetched with
+# the prices and shown by the API and UI only; they are never published.
+benchmark = "^GSPC"
+benchmark_name = "S&P 500"
 
 [universe]
 # "marketcap": the top `size` of the index get news and sentiment (coverage;

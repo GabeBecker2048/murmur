@@ -68,6 +68,15 @@ and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploy
 - The index level: `src/murmur/index_level.py` (`compute_levels`, `update_levels` replaces
   the whole history in `index_levels`/`index_contributions`, schema v11) runs after every
   analysis path; a month's weights take effect at the close of its first session.
+- The comparison line (0.8.1): `pipeline._ingest_benchmark` runs inside `run_prices` and
+  `backfill_prices` (best effort, never fails the stage). It fetches `index.benchmark`
+  (`^GSPC`) through `YfinanceBenchmark` whatever the price source, into `benchmark_closes`
+  (v12). `/index/{name}/benchmark` serves it. It is not a dataset: S&P index values stay
+  out of the published tree. `tests/conftest.py` stubs `default_benchmark_source` to
+  None (autouse); pass a fake `benchmark=` to test it. The index page
+  (`pages/index.js` `levelChart`) filters the full level history client-side, keeps the
+  range in the query string via `history.replaceState`, and switches the y-axis to
+  "change since the first session" when the comparison is on.
 - `docs/*.md` are generated: after changing settings, routes, datasets or columns run
   `uv run python scripts/gen_docs.py` (`tests/test_docs.py` fails otherwise). A new
   published column needs a line in `murmur.dictionary.COLUMNS`.

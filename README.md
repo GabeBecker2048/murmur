@@ -262,6 +262,7 @@ GET  /api/v1/settings[/schema]           effective config with provenance; PUT /
 GET  /api/v1/datasets[/{name}]           the published datasets and their files
 GET  /api/v1/index/m100[/months|/changes|/history/{key}]   the Murmur 100: constituents, weights
 GET  /api/v1/index/m100/level[?from&to], /level/{date|latest}   the daily level; one session's contributions
+GET  /api/v1/index/m100/benchmark[?from&to]                     S&P 500 closes for the chart (not published)
 GET  /api/v1/companies[/{key}]           every company ever ranked, by ticker or CIK
 GET  /api/v1/days[/{date}[/articles]]    per-day cross-section
 GET  /api/v1/tickers[/{t}[/series|/articles|/leadlag]]

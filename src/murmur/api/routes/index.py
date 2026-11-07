@@ -135,6 +135,36 @@ def level(
     }
 
 
+@router.get("/index/{name}/benchmark")
+def benchmark(
+    name: str,
+    store: Store = Depends(get_store),
+    config: Config = Depends(get_config),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = None,
+):
+    """Daily closes of the comparison index (``index.benchmark``, the S&P 500 by default)
+    between ``from`` and ``to``, for drawing against the level. Not part of the published
+    data; ``symbol`` is null and ``items`` empty when no benchmark is configured."""
+    _check(name, config)
+    symbol = config.index.benchmark or None
+    rows = (
+        store.benchmark_between(
+            symbol, _day(from_, "from") or "0000-00-00", _day(to, "to") or "9999-12-31"
+        )
+        if symbol
+        else []
+    )
+    items = [dict(r) for r in rows]
+    return {
+        "name": name,
+        "symbol": symbol,
+        "title": config.index.benchmark_name if symbol else None,
+        "items": items,
+        "total": len(items),
+    }
+
+
 @router.get("/index/{name}/level/{day}")
 def level_day(
     name: str,

@@ -176,7 +176,7 @@ export function lineChart(node, series, { yTitle, yFormat, percent = false, zero
         ...baseLayout(p).xaxis,
         ...(nPoints <= 10
           ? { type: "category" }
-          : { type: "date", tickformat: "%b %-d", hoverformat: "%Y-%m-%d" }),
+          : { type: "date", tickformat: spanDays(series) > 300 ? "%b %Y" : "%b %-d", hoverformat: "%Y-%m-%d" }),
       },
       yaxis: {
         ...baseLayout(p).yaxis,
@@ -187,6 +187,12 @@ export function lineChart(node, series, { yTitle, yFormat, percent = false, zero
     });
     plot(node, traces, layout);
   });
+}
+
+// Days between the earliest and latest x of date series (0 when not dates).
+function spanDays(series) {
+  const xs = series.flatMap((s) => [s.x[0], s.x[s.x.length - 1]]).filter(Boolean).map((x) => Date.parse(x)).filter((t) => !Number.isNaN(t));
+  return xs.length ? (Math.max(...xs) - Math.min(...xs)) / 86400000 : 0;
 }
 
 /** One series of bars (identity: one hue). items: [{label, value, hover?}] */
