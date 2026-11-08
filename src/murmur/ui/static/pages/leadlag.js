@@ -20,6 +20,7 @@ export async function render(main, parts, query) {
     return_type: query.get("return_type") || "daily",
     lag: Number(query.get("lag") || 0),
     day: query.get("day") || "",
+    trend: query.get("trend") === "0" ? "0" : "", // the session scatter's trendline: on unless "0"
   };
   const sources = await api("sources").catch(() => ({ items: [] }));
   const sourceNames = ["all", ...(sources.items || []).map((s) => s.source).filter((s) => s !== "all")];
@@ -90,7 +91,9 @@ export async function render(main, parts, query) {
   const dayWrap = el("div", { class: "stack" });
   const dayInput = el("input", { type: "date", value: f.day || leadlag.as_of || "" });
   dayInput.addEventListener("change", () => { f.day = dayInput.value; go(); });
-  const dayCard = card("One session up close", el("div", {}, el("div", { class: "filters" }, field("Session", dayInput)), dayWrap), { sub: "Per-company sentiment against that day's return" });
+  // Toggling the trendline redraws in place and keeps ?trend=0 in the address bar.
+  const trendBox = el("input", { type: "checkbox", checked: f.trend !== "0" || undefined });
+  const dayCard = card("One session up close", el("div", {}, el("div", { class: "filters" }, field("Session", dayInput), el("label", { class: "check" }, trendBox, "Show trendline")), dayWrap), { sub: "Per-company sentiment against that day's return" });
 
   clear(main).append(
     el("div", { class: "page-head" }, el("h1", { text: "Lead or lag" }), el("p", { class: "lede", text: "Correlate each news window with each return at a one-session lead and lag. A positive lag +1 means today's news lines up with tomorrow's return." })),
@@ -103,10 +106,10 @@ export async function render(main, parts, query) {
       yTitle: f.method === "spearman" ? "Spearman ρ" : "Pearson r",
     });
   }
-  renderDay(dayWrap, f.day || leadlag.as_of, f);
+  renderDay(dayWrap, f.day || leadlag.as_of, f, trendBox);
 }
 
-async function renderDay(wrap, day, f) {
+async function renderDay(wrap, day, f, trendBox) {
   if (!day) {
     wrap.append(el("div", { class: "empty", text: "No analysed session yet." }));
     return;
@@ -135,5 +138,13 @@ async function renderDay(wrap, day, f) {
       link(`/tickers`, "Company pages →"),
     ),
   );
-  if (points.length >= 3) scatterChart(node, points, { xTitle: `${WINDOW_LABEL[f.window]} sentiment (mean score)`, yTitle: RETURN_LABEL[f.return_type], percentY: true });
+  if (points.length < 3) return;
+  const draw = () =>
+    scatterChart(node, points, { xTitle: `${WINDOW_LABEL[f.window]} sentiment (mean score)`, yTitle: RETURN_LABEL[f.return_type], percentY: true, trend: trendBox.checked });
+  trendBox.onchange = () => {
+    f.trend = trendBox.checked ? "" : "0";
+    history.replaceState(null, "", `/leadlag${qs(f)}`);
+    draw();
+  };
+  draw();
 }
