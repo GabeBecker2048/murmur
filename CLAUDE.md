@@ -25,6 +25,8 @@ the three maintainers can merge. `dockerized` is an old branch kept on purpose.
 `.github/workflows/release.yml` tests, builds, pushes `ghcr.io/gabebecker2048/murmur:X.Y.Z`
 and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
 and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
+`pyproject.toml` is the only place the version is written: `murmur.__version__` reads the
+installed metadata (run `uv lock` after the bump; tests compare against pyproject).
 
 ## The API and jobs (0.6.0, extended in 0.7.0; split into services in 0.8.0)
 

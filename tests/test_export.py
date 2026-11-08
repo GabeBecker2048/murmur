@@ -6,6 +6,7 @@ from datetime import date
 
 import pandas as pd
 
+import murmur
 from murmur import pipeline
 from murmur.analysis import analyze_day
 from murmur.export import compact_month, dataset, export_day, rebuild_month
@@ -93,7 +94,7 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert set(companies["first_month"]) == {"2026-11"}
 
     index = json.loads((base / "index.json").read_text())
-    assert index["murmur_version"] == "0.8.0"
+    assert index["murmur_version"] == murmur.__version__
     assert list(index["datasets"]) == [
         "companies",
         "m100",
@@ -333,7 +334,9 @@ def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
     assert daily["murmur_dataset"] == "prices" and daily["murmur_table"] == "prices"
     assert daily["license"].startswith("Source terms apply") and "yfinance" in daily["attribution"]
     assert (
-        "no rights" in daily["notice"] and daily["contact"] and daily["murmur_version"] == "0.8.0"
+        "no rights" in daily["notice"]
+        and daily["contact"]
+        and daily["murmur_version"] == murmur.__version__
     )
     assert daily["murmur_period"] == "2026-11-05" and daily["murmur_generated_at"].endswith("Z")
     monthly = read_metadata(base / "m100/2026/11/202611.constituents.parquet")

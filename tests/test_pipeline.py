@@ -3,6 +3,7 @@ from datetime import date
 
 import pytest
 
+import murmur
 from murmur import cli, pipeline
 from murmur.config import load_config
 from murmur.models import Article, PriceBar
@@ -231,7 +232,7 @@ def test_cli_exit_codes(cfg, monkeypatch, capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--version"])
     assert e.value.code == 0
-    assert "murmur 0.8.0" in capsys.readouterr().out
+    assert f"murmur {murmur.__version__}" in capsys.readouterr().out
 
 
 def test_previous_session_is_reanalysed_and_reexported(cfg):
