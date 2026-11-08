@@ -6,8 +6,12 @@ from pathlib import Path
 
 import pytest
 
+import murmur.pipeline
 from murmur.models import SentimentScores
 from murmur.store import Store
+
+# The real factory, for the one test that checks it (the autouse fixture stubs it).
+REAL_DEFAULT_BENCHMARK = murmur.pipeline.default_benchmark_source
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -53,6 +57,13 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_benchmark(monkeypatch):
+    """The prices stage also fetches the comparison index from Yahoo; tests that want
+    it pass a fake ``benchmark=`` source explicitly."""
+    monkeypatch.setattr(murmur.pipeline, "default_benchmark_source", lambda config: None)
 
 
 @pytest.fixture

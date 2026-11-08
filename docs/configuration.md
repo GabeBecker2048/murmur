@@ -25,6 +25,8 @@ Editable from the admin page unless marked locked.
 | `index.size` | integer | 100 | Companies ranked and weighted each month; coverage is at most this. |
 | `index.base_date` | string | "" | Base session of the daily level (YYYY-MM-DD). Empty = the first trading day of the earliest index month on record. |
 | `index.base_level` | number | 1000 | The level at the close of the base session. |
+| `index.benchmark` | string | "^GSPC" | Yahoo symbol drawn as a comparison line on the index chart (^GSPC = S&P 500). Empty = none. Shown by the API and UI only, never published. |
+| `index.benchmark_name` | string | "S&P 500" | The comparison line's label. |
 | `universe.min_market_cap` | number | 10000000000 | Screener floor in USD. |
 | `universe.static` | table | 50 entries | ticker = name pairs for the static universe. Replaces the list wholesale. |
 | `schedule.time` | string | "18:00" | Daily run time, HH:MM in the configured timezone. |

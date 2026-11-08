@@ -611,3 +611,14 @@ def test_index_level_routes(client, provider):
     ]
     assert client.get("/api/v1/index/m100/level/nope").status_code == 422
     assert client.get("/api/v1/index/x100/level").status_code == 404
+
+
+def test_index_benchmark_route(client, provider):
+    body = client.get("/api/v1/index/m100/benchmark").json()
+    assert body["symbol"] == "^GSPC" and body["title"] == "S&P 500" and body["items"] == []
+    with Store(provider.get().store_path) as s:
+        s.upsert_benchmark("^GSPC", [("2026-11-04", 6800.0), ("2026-11-05", 6834.0)], "fake")
+    body = client.get("/api/v1/index/m100/benchmark?from=2026-11-05").json()
+    assert body["items"] == [{"date": "2026-11-05", "close": 6834.0}] and body["total"] == 1
+    assert client.get("/api/v1/index/m100/benchmark?to=nope").status_code == 422
+    assert client.get("/api/v1/index/x100/benchmark").status_code == 404

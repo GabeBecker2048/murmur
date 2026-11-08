@@ -47,6 +47,7 @@ LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", *SECRET_KEYS)
 # Tables that a higher layer replaces wholesale instead of merging key by key.
 REPLACE_TABLES = {("universe", "static")}
 INDEX_NAME_PATTERN = r"^[a-z][a-z0-9]{1,15}$"
+BENCHMARK_PATTERN = r"\^?[A-Za-z0-9.\-=]{1,20}"
 
 
 class ConfigError(ValueError):
@@ -110,6 +111,9 @@ class IndexConfig:
     base_date: str = ""
     """The level's base session (YYYY-MM-DD); empty = the first index month's first session."""
     base_level: float = 1000.0
+    benchmark: str = "^GSPC"
+    """Yahoo symbol of the comparison line on the index chart; empty = none."""
+    benchmark_name: str = "S&P 500"
 
     @property
     def title(self) -> str:
@@ -412,6 +416,10 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
         base_level = float(index.get("base_level", 1000))
         if base_level <= 0:
             raise ConfigError("index.base_level must be > 0")
+        benchmark = str(index.get("benchmark", "^GSPC") or "").strip()
+        if benchmark and not re.fullmatch(BENCHMARK_PATTERN, benchmark):
+            raise ConfigError(f"index.benchmark must match {BENCHMARK_PATTERN}, not {benchmark!r}")
+        benchmark_name = str(index.get("benchmark_name", "S&P 500") or benchmark)
         if index_size < 1:
             raise ConfigError("index.size must be >= 1")
         if universe["source"] == "marketcap" and int(universe.get("size", 100)) > index_size:
@@ -446,7 +454,12 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 static=static,
             ),
             index=IndexConfig(
-                name=index_name, size=index_size, base_date=base_date, base_level=base_level
+                name=index_name,
+                size=index_size,
+                base_date=base_date,
+                base_level=base_level,
+                benchmark=benchmark,
+                benchmark_name=benchmark_name,
             ),
             schedule=ScheduleConfig(
                 time=schedule_time,
@@ -594,6 +607,20 @@ SETTINGS_SCHEMA: list[dict] = [
         "path": "index.base_level",
         "type": "number",
         "help": "The level at the close of the base session.",
+    },
+    {
+        "path": "index.benchmark",
+        "type": "string",
+        "pattern": r"^(" + BENCHMARK_PATTERN + r")?$",
+        "help": (
+            "Yahoo symbol drawn as a comparison line on the index chart (^GSPC = S&P 500)."
+            " Empty = none. Shown by the API and UI only, never published."
+        ),
+    },
+    {
+        "path": "index.benchmark_name",
+        "type": "string",
+        "help": "The comparison line's label.",
     },
     {
         "path": "universe.min_market_cap",

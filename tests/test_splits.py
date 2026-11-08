@@ -136,3 +136,57 @@ def test_default_splits_source_follows_config_and_key(cfg, tmp_path):  # noqa: F
         pipeline.default_splits_source(load_config(user, env={"MURMUR_POLYGON_API_KEY": "k"})).name
         == "none"
     )
+
+
+class FakeBenchmark:
+    name = "fake-bench"
+
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def fetch_closes(self, symbol, start, end):
+        self.calls.append((symbol, start, end))
+        if self.fail:
+            raise RuntimeError("yahoo down")
+        return [("2026-11-04", 6800.0), ("2026-11-05", 6834.0)]
+
+
+def test_run_prices_fetches_the_benchmark_history_then_tops_it_up(store, cfg):  # noqa: F811
+    record_universe(store, cfg, date(2026, 11, 5))
+    bench = FakeBenchmark()
+    pipeline.run_prices(store, cfg, date(2026, 11, 5), FakePrices(), NoSplits(), bench)
+    # no history yet: from the first price on record
+    assert bench.calls == [("^GSPC", date(2026, 11, 4), date(2026, 11, 5))]
+    assert [tuple(r) for r in store.benchmark_between("^GSPC", "0", "9")] == [
+        ("2026-11-04", 6800.0),
+        ("2026-11-05", 6834.0),
+    ]
+    pipeline.run_prices(store, cfg, date(2026, 11, 5), FakePrices(), NoSplits(), bench)
+    # then the last week again, so a restated close is overwritten
+    assert bench.calls[1] == ("^GSPC", date(2026, 10, 29), date(2026, 11, 5))
+
+
+def test_a_benchmark_failure_never_fails_the_prices_stage(store, cfg):  # noqa: F811
+    record_universe(store, cfg, date(2026, 11, 5))
+    summary = pipeline.run_prices(
+        store, cfg, date(2026, 11, 5), FakePrices(), NoSplits(), FakeBenchmark(fail=True)
+    )
+    assert summary.startswith("2 bars")
+    assert store.benchmark_span("^GSPC") == (None, None)
+
+
+def test_an_empty_benchmark_setting_means_no_source(cfg, tmp_path):  # noqa: F811
+    import pytest
+
+    from murmur.config import ConfigError, load_config
+    from murmur.sources.yfinance_prices import YfinanceBenchmark
+    from tests.conftest import REAL_DEFAULT_BENCHMARK as real
+
+    assert isinstance(real(cfg), YfinanceBenchmark)
+    user = tmp_path / "nobench.toml"
+    user.write_text(cfg.source_path.read_text() + '\n[index]\nbenchmark = ""\n')
+    assert real(load_config(user, env={})) is None
+    user.write_text(cfg.source_path.read_text() + '\n[index]\nbenchmark = "bad symbol!"\n')
+    with pytest.raises(ConfigError):
+        load_config(user, env={})

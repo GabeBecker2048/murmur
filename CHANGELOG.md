@@ -4,6 +4,26 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.8.1] - 2026-11-07
+
+The index chart takes any date range and can show the S&P 500 for comparison.
+
+### Added
+
+- The index page's level chart takes any range: 1M, 3M, 6M, YTD, 1Y and All
+  presets, or any from/to dates. The range is kept in the address bar
+  (`?range=3m`, `?from=…&to=…`), so a view can be linked.
+- A toggleable S&P 500 line on that chart. With it on, both lines show the
+  change since the first session in the range, on one axis. The closes
+  (`^GSPC`) are fetched from Yahoo with the prices, whichever price source is
+  configured. The first run fetches back to the first price on record; after
+  that each run re-fetches the last week. A failed fetch only logs a warning.
+  They are stored in `benchmark_closes` (schema v12) and served by
+  `GET /api/v1/index/{name}/benchmark`. They are never written to the
+  published tree. `index.benchmark` (empty = no line) and
+  `index.benchmark_name` choose the line.
+- Date axes longer than about 300 days label ticks with month and year.
+
 ## [0.8.0] - 2026-11-07
 
 Hardening: four services, offsite backup, a health report, the shuffle test, the daily

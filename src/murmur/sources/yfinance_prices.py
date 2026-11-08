@@ -138,3 +138,31 @@ class YfinancePrices:
         if drop is not None:
             log.info("market not closed yet; ignoring today's partial bar (%s)", drop)
         return parse_download(df, symbols, self.tz, drop)
+
+
+class YfinanceBenchmark:
+    """Daily closes of one index symbol (``^GSPC``) for the comparison line."""
+
+    name = SOURCE
+
+    def __init__(self, tz: str):
+        self.tz = tz
+
+    def fetch_closes(self, symbol: str, start: date, end: date) -> list[tuple[str, float]]:
+        from datetime import timedelta
+
+        import yfinance as yf
+
+        df = yf.download(
+            [symbol],
+            start=start.isoformat(),
+            end=(end + timedelta(days=1)).isoformat(),
+            interval="1d",
+            auto_adjust=False,
+            actions=False,
+            group_by="ticker",
+            progress=False,
+            threads=False,
+        )
+        drop = partial_bar_date(datetime.now(ZoneInfo(self.tz)), self.tz)
+        return [(b.date, b.close) for b in parse_download(df, {symbol: symbol}, self.tz, drop)]

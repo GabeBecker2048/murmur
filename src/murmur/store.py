@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -337,6 +338,18 @@ MIGRATIONS: dict[int, str] = {
         contribution REAL,
         points       REAL,
         PRIMARY KEY (date, ticker)
+    );
+    """,
+    12: """
+    -- 0.8.1: daily closes of the comparison index (the S&P 500, ^GSPC) for the index
+    -- page's chart. Shown by the API and UI only; never written to the published tree.
+    CREATE TABLE benchmark_closes (
+        symbol     TEXT NOT NULL,
+        date       TEXT NOT NULL,
+        close      REAL NOT NULL,
+        source     TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, date)
     );
     """,
 }
@@ -1106,6 +1119,39 @@ class Store:
                FROM index_contributions WHERE date = ? ORDER BY contribution DESC, ticker""",
             (day,),
         ).fetchall()
+
+    def upsert_benchmark(
+        self, symbol: str, closes: Iterable[tuple[str, float]], source: str
+    ) -> int:
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = [(symbol, d, float(c), source, now) for d, c in closes]
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.executemany(
+                """INSERT INTO benchmark_closes (symbol, date, close, source, fetched_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (symbol, date) DO UPDATE SET
+                     close = excluded.close, source = excluded.source,
+                     fetched_at = excluded.fetched_at""",
+                rows,
+            )
+        return len(rows)
+
+    def benchmark_span(self, symbol: str) -> tuple[str | None, str | None]:
+        row = self.conn.execute(
+            "SELECT min(date), max(date) FROM benchmark_closes WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        return row[0], row[1]
+
+    def benchmark_between(self, symbol: str, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT date, close FROM benchmark_closes
+               WHERE symbol = ? AND date >= ? AND date <= ? ORDER BY date""",
+            (symbol, start, end),
+        ).fetchall()
+
+    def first_price_date(self) -> str | None:
+        return self.conn.execute("SELECT min(date) FROM prices").fetchone()[0]
 
     def latest_placebo_as_of(self) -> str | None:
         return self.conn.execute("SELECT max(as_of) FROM placebo").fetchone()[0]

@@ -74,6 +74,16 @@ def default_price_source(config: Config) -> PriceSource:
     return YfinancePrices(tz=config.timezone)
 
 
+def default_benchmark_source(config: Config):
+    """The comparison index's closes come from Yahoo whatever the price source is
+    (Polygon's grouped bars have no indices); None when ``index.benchmark`` is empty."""
+    if not config.index.benchmark:
+        return None
+    from murmur.sources.yfinance_prices import YfinanceBenchmark
+
+    return YfinanceBenchmark(tz=config.timezone)
+
+
 def default_splits_source(config: Config) -> SplitsSource:
     """Polygon when asked for, or under ``auto`` when its key is configured; otherwise
     none (with a warning for unadjusted price sources, whose split days would then
@@ -221,6 +231,7 @@ def run_prices(
     day: date,
     source: PriceSource | None = None,
     splits: SplitsSource | None = None,
+    benchmark=None,
 ) -> str:
     source = source or default_price_source(config)
     tickers = universe_tickers(store, day)
@@ -233,6 +244,7 @@ def run_prices(
     n_splits = _ingest_splits(
         store, config, date.fromisoformat(days[0]), date.fromisoformat(days[-1]), splits
     )
+    _ingest_benchmark(store, config, date.fromisoformat(days[-1]), benchmark)
     note = f", {n_splits} splits" if n_splits else ""
     return f"{n} bars for {covered}/{len(tickers)} tickers{note}"
 
@@ -244,6 +256,7 @@ def backfill_prices(
     end: date,
     source: PriceSource | None = None,
     splits: SplitsSource | None = None,
+    benchmark=None,
 ) -> str:
     source = source or default_price_source(config)
     members, _ = membership_for(store, config, end)
@@ -253,6 +266,7 @@ def backfill_prices(
         raise RuntimeError("prices: source returned no bars")
     n = store.upsert_prices(bars, source.name)
     n_splits = _ingest_splits(store, config, start, end, splits)
+    _ingest_benchmark(store, config, end, benchmark)
     note = f", {n_splits} splits" if n_splits else ""
     return (
         f"{start}..{end}: {n} bars for {len({b.ticker for b in bars})}/{len(tickers)} tickers{note}"
@@ -275,6 +289,33 @@ def _ingest_splits(
         )
         return 0
     return store.upsert_splits(found, splits.name) if found else 0
+
+
+BENCHMARK_OVERLAP_DAYS = 7
+
+
+def _ingest_benchmark(store: Store, config: Config, end: date, source=None) -> int:
+    """Bring the comparison index's closes up to ``end``: from the first price on record
+    when the history is missing or starts later, else the last week again (a restated
+    close is overwritten). Best effort: a failure is logged and the next run retries."""
+    symbol = config.index.benchmark
+    source = source or default_benchmark_source(config)
+    if not symbol or source is None:
+        return 0
+    first, last = store.benchmark_span(symbol)
+    want = store.first_price_date() or end.isoformat()
+    if first is None or first > want:
+        start = date.fromisoformat(want)
+    else:
+        start = date.fromisoformat(last) - timedelta(days=BENCHMARK_OVERLAP_DAYS)
+    if start > end:
+        return 0
+    try:
+        closes = source.fetch_closes(symbol, start, end)
+    except Exception as e:  # noqa: BLE001
+        log.warning("benchmark: %s %s..%s failed (%s)", symbol, start, end, e)
+        return 0
+    return store.upsert_benchmark(symbol, closes, source.name) if closes else 0
 
 
 # -- sentiment, analysis, export ---------------------------------------------
