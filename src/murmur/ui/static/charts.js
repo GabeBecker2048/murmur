@@ -223,7 +223,24 @@ export function barChart(node, items, { yTitle, horizontal = false, percent = fa
 }
 
 /** Scatter of (x, y) with labels; a single series in slot 1. */
-export function scatterChart(node, points, { xTitle, yTitle, percentY = false } = {}) {
+// Ordinary least squares y = a + b x; null when x does not vary.
+export function leastSquares(points) {
+  const n = points.length;
+  if (n < 2) return null;
+  const mx = points.reduce((s, q) => s + q.x, 0) / n;
+  const my = points.reduce((s, q) => s + q.y, 0) / n;
+  let sxx = 0;
+  let sxy = 0;
+  for (const q of points) {
+    sxx += (q.x - mx) ** 2;
+    sxy += (q.x - mx) * (q.y - my);
+  }
+  if (sxx === 0) return null;
+  const slope = sxy / sxx;
+  return { slope, intercept: my - slope * mx };
+}
+
+export function scatterChart(node, points, { xTitle, yTitle, percentY = false, trend = false } = {}) {
   return register(node, () => {
     const p = palette();
     const trace = {
@@ -234,14 +251,34 @@ export function scatterChart(node, points, { xTitle, yTitle, percentY = false } 
       text: points.map((q) => q.label),
       marker: { color: p.series[0], size: 9, line: { color: p.surface, width: 2 }, opacity: 0.9 },
       hovertemplate: "<b>%{text}</b><br>sentiment %{x:+.2f} · return %{y:+.2%}<extra></extra>",
+      name: "Companies",
     };
+    const traces = [trace];
+    const fit = trend ? leastSquares(points) : null;
+    if (fit) {
+      const xs = points.map((q) => q.x);
+      const x0 = Math.min(...xs);
+      const x1 = Math.max(...xs);
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        name: "Trendline (least squares)",
+        x: [x0, x1],
+        y: [fit.intercept + fit.slope * x0, fit.intercept + fit.slope * x1],
+        line: { color: p.series[1], width: 2 },
+        hovertemplate: `slope ${percentY ? (fit.slope * 100).toFixed(2) + " pp" : fit.slope.toFixed(3)} per 1.0 of sentiment<extra></extra>`,
+      });
+    }
     const layout = baseLayout(p, {
       hovermode: "closest",
-      showlegend: false,
+      showlegend: traces.length > 1,
+      // above the plot: below it, the legend collides with the x-axis title on phones
+      legend: { ...baseLayout(p).legend, y: 1.02, yanchor: "bottom" },
+      margin: { ...baseLayout(p).margin, t: traces.length > 1 ? 32 : 8 },
       xaxis: { ...baseLayout(p).xaxis, title: { text: xTitle, font: { size: 12 } }, zeroline: true },
       yaxis: { ...baseLayout(p).yaxis, title: { text: yTitle, font: { size: 12 } }, tickformat: percentY ? "+.1%" : undefined, zeroline: true },
     });
-    plot(node, [trace], layout);
+    plot(node, traces, layout);
   });
 }
 

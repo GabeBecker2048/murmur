@@ -4,6 +4,20 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.8.2] - 2026-11-08
+
+### Added
+
+- A "Show trendline" checkbox on the lead/lag page's "One session up close"
+  scatter, on by default. It draws the ordinary least-squares line through
+  that session's companies, and hovering the line gives its slope.
+  `?trend=0` keeps it off across reloads and date changes.
+
+### Changed
+
+- The scatter's legend sits above the plot, so on phones it no longer
+  overlaps the x-axis title.
+
 ## [0.8.1] - 2026-11-07
 
 The index chart takes any date range and can show the S&P 500 for comparison.
