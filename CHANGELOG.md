@@ -24,6 +24,12 @@ The index chart takes any date range and can show the S&P 500 for comparison.
   `index.benchmark_name` choose the line.
 - Date axes longer than about 300 days label ticks with month and year.
 
+### Fixed
+
+- `murmur.__version__` is read from the package metadata, so `pyproject.toml` is
+  the only place a version is written. The first 0.8.1 tag failed its image
+  check because a second copy in `murmur/__init__.py` still said 0.8.0.
+
 ## [0.8.0] - 2026-11-07
 
 Hardening: four services, offsite backup, a health report, the shuffle test, the daily

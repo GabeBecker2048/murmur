@@ -21,7 +21,8 @@ the three maintainers can merge. `dockerized` is an old branch kept on purpose.
 ## Releasing
 
 `./scripts/release.sh X.Y.Z` from an up-to-date `main` (after the PR that bumps
-`pyproject.toml` and adds the `## [X.Y.Z]` CHANGELOG section has merged). It pushes the tag;
+`pyproject.toml`, the only place the version is written: `murmur.__version__` reads the
+installed metadata, so run `uv sync` or `uv lock` after the bump and adds the `## [X.Y.Z]` CHANGELOG section has merged). It pushes the tag;
 `.github/workflows/release.yml` tests, builds, pushes `ghcr.io/gabebecker2048/murmur:X.Y.Z`
 and `:latest`, and creates the GitHub release. `image.yml` only builds and smoke-tests on PRs
 and `main`. The server's autopatch pulls `:latest` at 05:15, so a release deploys next morning.
