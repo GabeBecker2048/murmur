@@ -59,6 +59,35 @@ around both. Three pull requests, one release.
   `GET /api/v1/citation?findings=` (BibTeX, APA, CFF), `docs/dataset-card.md` (a
   datasheet with a Hugging Face header for the 1.0 mirror) and `docs/quickstart.md`
   (pandas, DuckDB, latest URLs, bundles).
+- **The dashboard, rebuilt** around the answer. Findings (`/`, the newest frozen
+  snapshot: the answer, r at lags -1/0/+1 with the shuffled range in three views, the
+  checks, every window x return as a heatmap, splits by size and source, caveats, the
+  live last 12 months, cite/embed/download), News vs. prices (`/news-vs-prices`, the
+  explorer with a heatmap in place of the 27-row table), Companies (`/companies`, with a
+  second company to compare, `?vs=`), Headlines (search), Data (`/downloads`: the bundle
+  builder with a size estimate and curl/pandas/DuckDB snippets, monthly archives, latest
+  URLs, every file), Methodology and Status. Sources is gone (source stays a filter).
+  `/leadlag`, `/tickers` and `/sources` redirect (301). Unknown pages get a 404 page.
+- **The logo**: the "murmuration" flock in the header, favicon (a 7-dot version below
+  48 px), touch and app icons and a 1200x630 link-preview card (`src/murmur/brand.py`,
+  `scripts/make_brand.py`), with Space Grotesk (OFL, self-hosted) for the wordmark and
+  headings.
+- Each page's `<title>`, description, canonical URL and Open Graph/Twitter tags are
+  filled in on the server, so shared links preview without running the page.
+- `/embed/findings?id=&theme=`: the Findings chart alone, with attribution, for an iframe.
+
+### Changed
+
+- `app.js` is split: `lib.js` holds the side-effect-free helpers every page, chart and
+  embed imports; `app.js` is only the shell.
+- The lead/lag chart's legend sits above the plot (it overlapped the lag labels on
+  narrow cards).
+
+### Fixed
+
+- `/api/v1/datasets` reported a dataset made private through the settings as public
+  until the next export rewrote the manifest; it now follows the live setting.
+- A link to a section (`/methodology#licenses`) opens at that section.
 
 ## [0.8.2] - 2026-11-08
 

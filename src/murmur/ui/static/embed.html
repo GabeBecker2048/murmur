@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmur findings</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { min-height: 0; background: var(--surface-1); }
+  .embed { padding: 12px 14px 8px; }
+  .embed h1 { font-size: 1.05rem; margin: 0 0 2px; }
+  .embed .sub { color: var(--text-2); font-size: .82rem; margin: 0 0 4px; }
+  .embed .chart { min-height: 320px; }
+  .embed .credit { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--text-3); margin-top: 4px; }
+  .embed .credit a { color: var(--text-2); }
+</style>
+</head>
+<body>
+<main class="embed" id="embed">
+  <h1 id="embed-title">Does news predict stock prices?</h1>
+  <p class="sub" id="embed-sub"></p>
+  <div class="chart" id="embed-chart"></div>
+  <p class="credit"><svg width="14" height="14" viewBox="0 0 100 100" aria-hidden="true" class="brand-mark"><g><circle cx="11.8" cy="85.9" r="8.1"/><circle cx="24.6" cy="82.4" r="8.6"/><circle cx="37.3" cy="67.6" r="9.2"/><circle cx="50.0" cy="43.6" r="9.8"/><circle cx="62.7" cy="23.5" r="10.4"/><circle cx="75.4" cy="15.7" r="11.0"/><circle cx="88.2" cy="14.0" r="11.6"/></g></svg>
+    <span id="embed-credit">Murmur</span></p>
+</main>
+<script src="/static/vendor/plotly-basic.min.js"></script>
+<script type="module" src="/static/embed.js"></script>
+</body>
+</html>

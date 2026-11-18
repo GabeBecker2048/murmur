@@ -622,3 +622,23 @@ def test_index_benchmark_route(client, provider):
     assert body["items"] == [{"date": "2026-11-05", "close": 6834.0}] and body["total"] == 1
     assert client.get("/api/v1/index/m100/benchmark?to=nope").status_code == 422
     assert client.get("/api/v1/index/x100/benchmark").status_code == 404
+
+
+def test_dataset_visibility_follows_the_live_setting(client, provider):
+    """A dataset made private through the settings is reported private at once, not
+    only after the next export rewrites the manifest (fixed in 0.9.0)."""
+    from murmur.export import export_day
+
+    with Store(provider.get().store_path) as s:
+        export_day(s, provider.get(), date(2026, 11, 5), today=date(2026, 11, 5))
+    public = {d["name"]: d["public"] for d in client.get("/api/v1/datasets").json()["items"]}
+    assert public["prices"] is True
+    r = client.put(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"datasets": {"private": ["prices"]}},
+    )
+    assert r.status_code == 200
+    public = {d["name"]: d["public"] for d in client.get("/api/v1/datasets").json()["items"]}
+    assert public["prices"] is False and public["news"] is True
+    assert client.get("/api/v1/datasets/prices").json()["public"] is False

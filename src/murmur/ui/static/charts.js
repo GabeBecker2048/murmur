@@ -2,7 +2,7 @@
 // theme: transparent surfaces, hairline grid, thin 2px lines, 8px+ markers, a legend
 // whenever there are two or more series, one y-axis per chart (never two scales).
 
-import { el, currentTheme, MATCHED, pairLabel } from "./app.js";
+import { el, currentTheme, MATCHED, pairLabel } from "./lib.js";
 
 function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -116,8 +116,9 @@ export function leadlagChart(node, rows, { horizon, method = "pearson" } = {}) {
     const layout = baseLayout(p, {
       hovermode: "closest",
       showlegend: traces.length > 1,
-      margin: { l: 48, r: 16, t: 8, b: narrow ? 56 : 70 },
-      legend: { ...baseLayout(p).legend, y: narrow ? -0.22 : -0.18 },
+      // the legend sits above the plot: below it, it collides with the two-line lag labels
+      margin: { l: 48, r: 16, t: traces.length > 1 ? 18 + 20 * traces.length * (narrow ? 1 : 0.5) : 8, b: 48 },
+      legend: { ...baseLayout(p).legend, y: 1.02, yanchor: "bottom" },
       xaxis: {
         ...baseLayout(p).xaxis,
         tickvals: [-1, 0, 1],
@@ -302,3 +303,72 @@ function hexAlpha(hex, alpha) {
 }
 
 export { currentTheme };
+
+// ---- the findings chart ------------------------------------------------------------
+
+/** The headline result: r at lags -1, 0, +1 with 95 % intervals and, behind each lag,
+ * the range shuffled headlines produce. rows: [{lag, r, ci_low, ci_high, n}];
+ * shuffled: {lag: [low, high]} (optional). Used by the Findings page and the embed. */
+export function findingsChart(node, rows, { shuffled = {}, yTitle = "Correlation (Pearson r)", compact = false } = {}) {
+  return register(node, () => {
+    const p = palette();
+    const byLag = Object.fromEntries(rows.map((r) => [r.lag, r]));
+    const lags = [-1, 0, 1].filter((l) => byLag[l]);
+    const shapes = lags
+      .filter((l) => shuffled[l])
+      .map((l) => ({
+        type: "rect",
+        xref: "x",
+        yref: "y",
+        x0: l - 0.22,
+        x1: l + 0.22,
+        y0: shuffled[l][0],
+        y1: shuffled[l][1],
+        fillcolor: p.grid,
+        line: { width: 0 },
+        layer: "below",
+      }));
+    const trace = {
+      type: "scatter",
+      mode: "markers+text",
+      x: lags,
+      y: lags.map((l) => byLag[l].r),
+      text: lags.map((l) => `r = ${byLag[l].r >= 0 ? "+" : "−"}${Math.abs(byLag[l].r).toFixed(3)}`),
+      textposition: "middle right",
+      textfont: { color: p.text1, size: compact ? 12 : 14 },
+      customdata: lags.map((l) => [byLag[l].n, byLag[l].ci_low, byLag[l].ci_high]),
+      error_y: {
+        type: "data",
+        symmetric: false,
+        array: lags.map((l) => (byLag[l].ci_high ?? byLag[l].r) - byLag[l].r),
+        arrayminus: lags.map((l) => byLag[l].r - (byLag[l].ci_low ?? byLag[l].r)),
+        color: p.series[0],
+        thickness: 2,
+        width: 6,
+      },
+      marker: { color: p.series[0], size: compact ? 12 : 15, line: { color: p.surface, width: 2 } },
+      hovertemplate: "r %{y:+.3f}<br>95 % CI %{customdata[1]:+.3f} to %{customdata[2]:+.3f}<br>n = %{customdata[0]:,}<extra></extra>",
+      showlegend: false,
+    };
+    const narrow = compact || (node.clientWidth > 0 && node.clientWidth < 560);
+    const layout = baseLayout(p, {
+      hovermode: "closest",
+      showlegend: false,
+      shapes,
+      margin: { l: 56, r: 16, t: 10, b: narrow ? 58 : 66 },
+      xaxis: {
+        ...baseLayout(p).xaxis,
+        tickvals: [-1, 0, 1],
+        ticktext: narrow
+          ? ["News after<br>the move", "Same<br>session", "News before<br>the move"]
+          : ["News after the move<br><span style='font-size:11px'>(follows prices)</span>", "Same session<br><span style='font-size:11px'>(moves together)</span>", "News before the move<br><span style='font-size:11px'>(predicts prices)</span>"],
+        range: [-1.6, 1.75],
+        zeroline: false,
+        showgrid: false,
+        fixedrange: true,
+      },
+      yaxis: { ...baseLayout(p).yaxis, title: { text: yTitle, font: { size: 12 } }, zeroline: true, zerolinewidth: 1.5, fixedrange: true },
+    });
+    plot(node, [trace], layout);
+  });
+}

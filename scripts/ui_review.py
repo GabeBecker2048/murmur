@@ -66,22 +66,35 @@ with sync_playwright() as p:
     page.on("response", on_response)
     page.set_viewport_size({"width": 1280, "height": 900})
 
-    # ---- overview
+    # ---- findings (home)
     page.goto(BASE + "/")
     settle(page)
-    tiles = page.locator(".tile").count()
-    step("overview loads with stat tiles", tiles >= 4, f"{tiles} tiles")
-    step("overview lead/lag chart drawn", page.locator(".card .chart .plotly").count() >= 1)
-    shot(page, "01-overview")
-    page.click("text=Explore every window, source and horizon")
+    step(
+        "findings hero states the answer", len(page.locator(".hero-findings h1").inner_text()) > 30
+    )
+    step("three lag cards", page.locator(".lag-card").count() == 3)
+    step("findings chart drawn", page.locator(".card .chart .plotly").count() >= 1)
+    before = page.locator(".chart-note").first.inner_text()
+    page.click(".seg button:has-text('Market move removed')")
+    page.wait_for_timeout(400)
+    step("market-adjusted view switches", page.locator(".chart-note").first.inner_text() != before)
+    page.click(".seg button:has-text('Day by day')")
+    page.wait_for_timeout(400)
+    step("day-by-day view draws", "each session" in page.locator(".chart-note").first.inner_text())
+    step("four checks listed", page.locator(".checks li").count() == 4)
+    step("embed snippet offered", "/embed/findings" in page.locator(".code pre").first.inner_text())
+    shot(page, "01-findings")
+    page.locator(".heatmap button.cell").nth(4).click()  # overnight news -> intraday return, lag 0
     settle(page)
     step(
-        "link navigates to /leadlag",
-        page.url.endswith("/leadlag") or "/leadlag?" in page.url,
+        "heatmap cell opens it in News vs. prices",
+        "/news-vs-prices?" in page.url
+        and "lag=0" in page.url
+        and "return_type=intraday" in page.url,
         page.url,
     )
 
-    # ---- lead/lag explorer
+    # ---- news vs. prices
     page.click(".seg button:has-text('6 mo')")
     settle(page)
     step("6-month filter updates URL", "months=6" in page.url, page.url)
@@ -91,49 +104,62 @@ with sync_playwright() as p:
     page.click(".seg button:has-text('Spearman')")
     settle(page)
     step(
-        "Spearman filter updates URL and table header",
-        "method=spearman" in page.url and page.locator("th:has-text('Spearman rho')").count() == 1,
+        "Spearman filter updates URL and heatmap note",
+        "method=spearman" in page.url and page.locator(".sub:has-text('Spearman')").count() >= 1,
     )
-    rows = page.locator("table tbody tr.clickable")
-    n_rows = rows.count()
-    step("full table has 27 rows", n_rows == 27, f"{n_rows}")
-    rows.nth(3).click()  # overnight news vs intraday return, lag -1
+    cells = page.locator(".heatmap button.cell")
+    step("heatmap has 27 cells", cells.count() == 27, f"{cells.count()}")
+    cells.nth(3).click()  # overnight news vs intraday return, lag -1
     settle(page)
     hist_title = page.locator("h2:has-text('History')").inner_text()
     step(
-        "row click changes history cell",
+        "cell click changes the history",
         "Overnight news vs intraday return" in hist_title and "lag -1" in hist_title,
         hist_title,
     )
+    step("picked cell is marked", page.locator(".heatmap button.cell.on").count() == 1)
     page.fill("input[type=date]", "2026-11-04")
     page.dispatch_event("input[type=date]", "change")
     settle(page)
+    page.wait_for_selector(
+        "section.card:last-of-type .chart .main-svg", state="attached", timeout=8000
+    )
     step(
         "session picker reloads the scatter",
         "day=2026-11-04" in page.url
         and ("companies" in page.locator("section.card:last-of-type").inner_text()),
     )
-    shot(page, "02-leadlag-filtered")
+    shot(page, "02-news-vs-prices")
+
+    # ---- old addresses
+    page.goto(BASE + "/leadlag?months=6")
+    settle(page)
+    step("/leadlag redirects", "/news-vs-prices?months=6" in page.url, page.url)
+    page.goto(BASE + "/tickers/AAPL")
+    settle(page)
+    step("/tickers/AAPL redirects", page.url.endswith("/companies/AAPL"), page.url)
 
     # ---- theme toggle + mobile menu
     page.click("#theme-toggle")
     page.wait_for_timeout(500)
     theme = page.evaluate("document.documentElement.dataset.theme")
     step("theme toggle sets data-theme", theme in ("dark", "light"), theme)
-    shot(page, "03-leadlag-theme-toggled")
     page.set_viewport_size({"width": 390, "height": 800})
     page.wait_for_timeout(500)
+    step(
+        "no horizontal scroll on a phone",
+        page.evaluate("document.documentElement.scrollWidth <= 390"),
+    )
     page.click("#menu-toggle")
     page.wait_for_timeout(300)
     step("phone menu opens", page.locator("#nav.open").count() == 1)
-    shot(page, "04-phone-menu")
+    shot(page, "03-phone-menu")
     page.click("#nav >> text=Companies")
     settle(page)
     step(
         "phone menu closes after navigation",
-        page.locator("#nav.open").count() == 0 and page.url.endswith("/tickers"),
+        page.locator("#nav.open").count() == 0 and page.url.endswith("/companies"),
     )
-    shot(page, "05-phone-companies")
     page.set_viewport_size({"width": 1280, "height": 900})
     page.click("#theme-toggle")  # back
     page.wait_for_timeout(300)
@@ -149,22 +175,19 @@ with sync_playwright() as p:
     )
     page.click("table tbody tr")
     settle(page)
-    step("row click opens the company page", page.url.endswith("/tickers/NVDA"), page.url)
+    step("row click opens the company page", page.url.endswith("/companies/NVDA"), page.url)
+    step("company page shows headlines", page.locator(".article").count() > 0)
+    page.select_option("select[aria-label='Compare with']", "MSFT")
+    settle(page)
     step(
-        "company page shows headlines",
-        page.locator(".article").count() > 0,
-        f"{page.locator('.article').count()} articles",
+        "compare adds a second company",
+        "vs=MSFT" in page.url and "MSFT" in page.locator(".chart").first.inner_text(),
+        page.url,
     )
     page.select_option("select", index=0)  # 30 days
     settle(page)
-    step("range select updates URL", "from=" in page.url, page.url)
-    shot(page, "06-company-nvda")
-
-    # ---- sources
-    page.goto(BASE + "/sources")
-    settle(page)
-    step("sources page lists yahoo", "yahoo" in page.locator("table").first.inner_text())
-    step("sources chart drawn", page.locator(".chart .plotly").count() >= 1)
+    step("range keeps the comparison", "from=" in page.url and "vs=MSFT" in page.url, page.url)
+    shot(page, "04-company-compare")
 
     # ---- index
     page.goto(BASE + "/index")
@@ -180,35 +203,92 @@ with sync_playwright() as p:
         r.status == 200 and "text/csv" in r.headers.get("content-type", ""),
         href,
     )
-    page.select_option("select", "2026-10")
-    settle(page)
-    step("month select updates URL", "month=2026-10" in page.url, page.url)
-    shot(page, "07-index")
 
-    # ---- downloads (prices made private for the private-dataset steps; restored at the end)
+    # ---- headlines
+    page.goto(BASE + "/headlines")
+    settle(page)
+    page.fill("input[type=search]", "earnings beat")
+    page.click("button:has-text('Search')")
+    settle(page)
+    n = page.locator(".results .article").count()
+    step("search finds headlines", "q=earnings+beat" in page.url and n > 0, f"{n} on the page")
+    page.select_option("select[aria-label=Tone]", "negative")
+    page.wait_for_url("**sentiment=negative**", timeout=8000)
+    page.wait_for_selector(".results .score-chip.negative", timeout=8000)
+    settle(page)
+    chips = page.locator(".results .score-chip")
+    neg = page.locator(".results .score-chip.negative").count()
+    step(
+        "tone filter keeps only negative",
+        "sentiment=negative" in page.url and chips.count() == neg > 0,
+        f"{neg}",
+    )
+    shot(page, "05-headlines")
+
+    # ---- data (prices made private for the private-dataset steps; restored at the end)
     AUTH = {"authorization": f"Bearer {TOKEN}", "content-type": "application/json"}
     page.request.put(
         BASE + "/api/v1/settings", headers=AUTH, data='{"datasets": {"private": ["prices"]}}'
     )
     page.goto(BASE + "/downloads")
-    settle(page)
-    page.click("section.card:has-text('News')")
-    settle(page)
+    settle(page, 1200)
     step(
-        "dataset card selects news",
-        "dataset=news" in page.url and page.locator("h2:has-text('News')").count() >= 1,
+        "private prices are not offered in the builder",
+        page.locator(".chips label:has-text('Prices')").count() == 0,
     )
-    csv = page.locator("a:has-text('CSV')").first.get_attribute("href")
-    r = page.request.get(BASE + csv)
-    step("news CSV downloads", r.status == 200, csv)
-    page.click("section.card:has-text('Prices')")
+    page.click(".chips label:has-text('News')")
+    page.click(".seg button:has-text('1 month')")
+    page.wait_for_timeout(1200)
+    step(
+        "estimate shown",
+        "up to" in page.locator("[aria-live=polite]").inner_text(),
+        page.locator("[aria-live=polite]").inner_text(),
+    )
+    href = page.locator("a:has-text('Download .tar.gz')").get_attribute("href")
+    r = page.request.get(BASE + href)
+    step(
+        "bundle downloads",
+        r.status == 200
+        and r.headers.get("content-type") == "application/gzip"
+        and len(r.body()) > 1000,
+        f"{href} {r.status} {len(r.body())} bytes",
+    )
+    step("builder state in the URL", "range=1m" in page.url and "news" in page.url, page.url)
+    archive = page.locator(".chips a.chip").first.get_attribute("href")
+    r = page.request.get(BASE + archive)
+    step("monthly archive downloads", r.status == 200, archive)
+    latest = page.request.get(BASE + "/data/sentiment/latest.sentiment.parquet")
+    step(
+        "latest URL serves",
+        latest.status == 200
+        and latest.headers.get("content-location", "").startswith("/data/sentiment/"),
+    )
+    page.click("summary:has-text('Prices')")
     settle(page)
     priv = page.locator(".notice.warn:has-text('not published')").count()
     step("prices shows the private notice", priv == 1)
-    pq = page.locator("a:has-text('Parquet')").first.get_attribute("href")
+    pq = page.locator("details[open] a:has-text('Parquet')").first.get_attribute("href")
     r = page.request.get(BASE + pq)
     step("private prices file refused without token", r.status == 403, f"{r.status}")
-    shot(page, "08-downloads-prices")
+    shot(page, "06-data")
+
+    # ---- methodology, status, embed, feed
+    page.goto(BASE + "/methodology#licenses")
+    settle(page)
+    step("methodology opens at its anchor", page.evaluate("window.scrollY > 300"))
+    page.goto(BASE + "/status")
+    settle(page)
+    step("status shows the services", page.locator(".tile .badge").count() >= 3)
+    page.goto(BASE + "/embed/findings?theme=dark")
+    settle(page)
+    step(
+        "embed draws the chart with attribution",
+        page.locator(".plotly").count() == 1
+        and "CC BY 4.0" in page.locator(".credit").inner_text(),
+    )
+    shot(page, "07-embed")
+    r = page.request.get(BASE + "/feed.xml")
+    step("feed serves Atom", r.status == 200 and "<feed" in r.text())
 
     # ---- admin
     page.goto(BASE + "/admin")
@@ -226,8 +306,9 @@ with sync_playwright() as p:
     page.wait_for_timeout(1500)
     msg = page.locator(".help").first.inner_text()
     step("backup job queued from the button", "job" in msg.lower(), msg)
-    # wait for the newest job to be done
-    for _ in range(30):
+    # wait for the newest job to be done (the worker polls every 5 s; a snapshot of a
+    # real-sized store takes ~10 s)
+    for _ in range(90):
         settle(page, 300)
         first = page.locator("table tbody tr").first.inner_text()
         if "done" in first:
@@ -341,7 +422,9 @@ with sync_playwright() as p:
     page.click("button:has-text('Sign out')")
     settle(page)
     step("sign out returns to the login form", page.locator("input[type=password]").count() == 1)
-    page.goto(BASE + "/downloads?dataset=prices")
+    page.goto(BASE + "/downloads")
+    settle(page)
+    page.click("summary:has-text('Prices')")
     settle(page)
     step(
         "private notice for visitors after sign-out",
@@ -354,7 +437,9 @@ with sync_playwright() as p:
     # 404 page
     page.goto(BASE + "/nothing-here")
     settle(page)
-    step("unknown route gives the API's 404, not the shell", "not found" in page.content().lower())
+    step(
+        "unknown route gets the 404 page", page.locator("h1:has-text('No such page')").count() == 1
+    )
 
     if "brave" not in mode:
         browser.close()

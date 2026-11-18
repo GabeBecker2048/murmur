@@ -1,7 +1,7 @@
 // Admin: sign in with the API token, then jobs, backfills, the scheduler, settings
 // and logs. Every action is a call to a write endpoint; reads refresh on a timer.
 
-import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, saveToken, badge, notice, navigate, today, daysAgo, ApiError } from "../app.js";
+import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, saveToken, badge, notice, navigate, today, daysAgo, ApiError } from "../lib.js";
 
 const TABS = [
   ["jobs", "Jobs"],

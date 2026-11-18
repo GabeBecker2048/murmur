@@ -7,8 +7,13 @@ US companies, stores it next to their daily prices, and correlates the two. It
 is built to run every day on a server and to publish the data and the findings.
 `ROADMAP.md` has the full design and the order things ship in.
 
-**Status: 0.8.0 in progress (hardening), pre-public.** See `ROADMAP.md`; 0.9.0 is the
-UI polish release. The 0.6.0 notes below still describe the running shape.
+**Status: 0.9.0, pre-public.** The answer so far, frozen as findings snapshot `2026-10`
+(sessions 3 November 2025 to 30 October 2026): **news moves with stock prices on the same
+day (r = 0.16) and trails them a little (r = 0.09 against the previous session's return),
+but it does not predict the next day (r = −0.004)**. The link survives the market move
+being taken out, a day-by-day estimate and a shuffle test. See the dashboard's Findings
+page, `ROADMAP.md` for what comes next (1.0: public release), and the 0.6.0 notes below
+for the running shape.
 
 **0.6.0.** One process serves an HTTP API, runs the daily
 job and executes queued work: `/api/v1` answers queries about days, tickers,
@@ -234,13 +239,20 @@ from the package, Plotly.js vendored, no build step, talking only to
 
 | page | what it shows |
 |---|---|
-| Overview | the question, today's three matched-pair correlations, the lead/lag chart, how the same-session correlation has moved, recent sessions |
-| Lead or lag | horizon, method and source filters; the chart; every window × return × lag with CI, p and n; the history of one cell; one session's per-company scatter |
-| Companies | the covered list for a month; a company's day sentiment, daily return, close, per-company lead/lag and latest headlines with scores |
-| Sources | coverage per source, overlap, same-session correlation by source, headlines per session |
-| Murmur 100 | constituents with rank and weight, top 20 chart, this month's additions and removals, downloads |
-| Downloads | every dataset with its license, tables, columns and files, as Parquet or CSV |
+| Findings (`/`) | the frozen conclusion: the answer in one sentence, r at lags −1/0/+1 with the shuffled range (all company-days, market move removed, day by day), the checks behind it, every window × return, splits by size and source, the caveats, the live last 12 months next to it, and how to cite, embed or download it |
+| News vs. prices | horizon, method and source filters; the matched pairs by lag; a heatmap of every window × return × lag; the history of one cell; one session's per-company scatter (was "Lead or lag", `/leadlag`) |
+| Companies | the covered list for a month; a company's sentiment, returns, close, its own lead/lag and latest headlines, optionally against a second company (`?vs=`) |
+| Murmur 100 | the daily level against the S&P 500, constituents with rank and weight, changes, downloads |
+| Headlines | every scored headline, searchable by words, company, tone, source and date |
+| Data | a bundle of any date range (size estimate, curl/pandas/DuckDB snippets), monthly archives, the stable latest URLs, every file with its license and columns |
+| Methodology | how every number is made, the checks, limitations, versions and stability, licenses, contact and takedown |
+| Status | services, the last two weeks of runs, the last 30 sessions' coverage |
 | Admin | sign in with the API token: jobs (queue, watch progress, tail logs, cancel), backfill form, scheduler (pause, resume, run now, recent runs), every setting as a form, the process log |
+
+Old addresses (`/leadlag`, `/tickers`, `/sources`) answer with a permanent redirect.
+`/embed/findings?id=&theme=` is the Findings chart alone, for an iframe; each page's
+title and link-preview tags are filled in on the server. The mark is the "murmuration"
+flock (`src/murmur/brand.py`; `scripts/make_brand.py` writes the SVG and PNG files).
 
 The admin token is kept in the tab's session storage only. On the public
 hostname, restrict `/admin` and non-GET requests to trusted networks at the
@@ -273,7 +285,14 @@ GET  /api/v1/sources[/{s}/series]        source coverage and comparison
 GET  /api/v1/charts/leadlag.png          the one chart the API draws
 GET  /data/index.json, /data/<dataset>/YYYY/MM/DD/YYYYMMDD.<table>.parquet[?format=csv]
 GET  /docs                               OpenAPI UI
-GET  /, /leadlag, /tickers/{t}, /sources, /index, /downloads, /admin   the dashboard
+GET  /api/v1/findings[/{id|latest|live}]  the frozen conclusions and the live 12 months
+GET  /api/v1/bundle?from=&to=&datasets=   any date range as one .tar.gz
+GET  /api/v1/articles?q=                 headline search
+GET  /api/v1/citation[?findings=]        BibTeX, APA, CITATION.cff
+GET  /data/<dataset>/latest.<table>.parquet, /data/findings/latest.json, /data/archives/
+GET  /feed.xml                           Atom: weekly results and new findings
+GET  /, /news-vs-prices, /companies/{t}, /index, /headlines, /downloads, /methodology, /status, /admin   the dashboard
+GET  /embed/findings                     the Findings chart for an iframe
 ```
 
 Reads need nothing. `POST`, `PUT` and `DELETE` need
