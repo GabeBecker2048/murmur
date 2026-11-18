@@ -387,7 +387,19 @@ def run_analyze(store: Store, config: Config, day: date) -> AnalyzeResult:
         rolling_rows = len(rolling_analysis(store, config, day, tickers))
         placebo_analysis(store, config, day, tickers)
         update_levels(store, config)
+        refresh_live_findings(store, config, day)
     return AnalyzeResult(today, backfilled, reanalyzed, rolling_rows)
+
+
+def refresh_live_findings(store: Store, config: Config, day: date) -> None:
+    """Best effort: the live findings row never fails the analysis it follows."""
+    from murmur import findings
+
+    try:
+        jobctl.report("findings", message=f"live as of {day}")
+        findings.refresh_live(store, config, day)
+    except Exception:
+        log.warning("live findings for %s failed", day, exc_info=True)
 
 
 def analyze_all(store: Store, config: Config) -> list[date]:
@@ -403,6 +415,7 @@ def analyze_all(store: Store, config: Config) -> list[date]:
         rolling_analysis(store, config, days[-1], tickers)
         placebo_analysis(store, config, days[-1], tickers)
         update_levels(store, config)
+        refresh_live_findings(store, config, days[-1])
     return days
 
 
@@ -426,6 +439,7 @@ def analyze_range(store: Store, config: Config, start: date, end: date) -> list[
             placebo_analysis(store, config, d, tickers)
     if days:
         update_levels(store, config)
+        refresh_live_findings(store, config, days[-1])
     return days
 
 

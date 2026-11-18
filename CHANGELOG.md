@@ -4,6 +4,38 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.9.0] - unreleased
+
+Ready to show: the answer stated and checked, the data versioned, a dashboard rebuilt
+around both. Three pull requests, one release.
+
+### Added
+
+- **Findings**: the conclusion over a window, with its numbers and reviewed prose stored
+  together (`findings` table, schema v13). A *frozen* snapshot is published once and
+  never changes; a *draft* can be replaced; a *live* row covering the last 12 months is
+  recomputed after every trading day's analysis (best effort, it never fails the run).
+  Each snapshot carries the robustness checks the conclusion rests on: the same
+  correlations with each return minus that session's cap-weighted index return, the
+  mean of each session's cross-company correlation with its t-statistic across sessions
+  (pooled p-values overstate certainty because a day's observations are not
+  independent), the within-session shuffle test (1000 shuffles), and splits by source
+  and by rank (1-50 vs 51-100). Unlike the rolling tables, every session is restricted
+  to that session's index members. `murmur findings --id --from --to [--freeze]`
+  (`--live`, `--list`), a `findings` job (`freeze` needs `confirm`), and the reviewed
+  text in `src/murmur/findings_text/<id>.toml`. The first snapshot, `2026-10`, covers
+  the first year: 3 November 2025 to 30 October 2026.
+- `GET /api/v1/findings`, `/findings/{id}` (`latest` = newest frozen, `live`), and
+  `GET /api/v1/charts/findings.png?id=&theme=` for embeds and link previews.
+- Frozen snapshots are published as `findings/<id>.json` (with their CC BY license
+  block) and the newest as `findings/latest.json`; the manifest lists them under
+  `findings`.
+- **Data versioning**: `DATA_VERSION` 1.0.0 in every Parquet footer
+  (`murmur_data_version`), the manifest (`data_version`) and every snapshot, with
+  `docs/data-changelog.md`, the promise in `docs/stability.md`, and
+  `tests/test_schema_stability.py`, which fails when a published table, column or key
+  disappears within a major version or the schema changes without a new version.
+
 ## [0.8.2] - 2026-11-08
 
 ### Added

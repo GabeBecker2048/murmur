@@ -79,6 +79,18 @@ installed metadata (run `uv lock` after the bump; tests compare against pyprojec
   (`pages/index.js` `levelChart`) filters the full level history client-side, keeps the
   range in the query string via `history.replaceState`, and switches the y-axis to
   "change since the first session" when the comparison is on.
+- Findings (0.9.0): `src/murmur/findings.py` (`compute`, `create`, `refresh_live`),
+  table `findings` (v13; kinds draft|frozen|live; `store.put_findings` refuses to replace
+  a frozen row), prose in `src/murmur/findings_text/<id>.toml` (required to freeze),
+  `pipeline.refresh_live_findings` after rolling/placebo/level (best effort),
+  `routes/findings.py`, `export.export_findings` (frozen only, never rewritten when
+  unchanged). Each session uses that session's universe members; market adjustment is
+  computed in memory (not from `index_levels`, which is updated after the analysis).
+- Data versioning (0.9.0): `publish.DATA_VERSION` (semver of the published data, not the
+  software) is in every footer, the manifest and every snapshot. Changing a published
+  table, column or key: bump it, add a `docs/data-changelog.md` section, then
+  `uv run python tests/test_schema_stability.py --write` (refuses without the bump).
+  `docs/stability.md` and `docs/data-changelog.md` are hand-written.
 - `docs/*.md` are generated: after changing settings, routes, datasets or columns run
   `uv run python scripts/gen_docs.py` (`tests/test_docs.py` fails otherwise). A new
   published column needs a line in `murmur.dictionary.COLUMNS`.

@@ -44,6 +44,7 @@ JOB_TYPES = (
     "export",
     "backup",
     "vacuum",
+    "findings",
     *sorted(DESTRUCTIVE),
 )
 BACKFILL_STAGES = ("news", "prices", "sentiment", "analyze", "export")
@@ -224,6 +225,25 @@ def _analyze(store: Store, config: Config, params: dict) -> dict:
     return {"summary": pipeline.describe_analyze(result)}
 
 
+@handler("findings")
+def _findings(store: Store, config: Config, params: dict) -> dict:
+    from murmur import findings
+
+    if params.get("live"):
+        payload = findings.refresh_live(store, config, _day(params, config))
+        return {"id": findings.LIVE_ID, "computed": payload is not None}
+    payload = findings.create(
+        store,
+        config,
+        params["id"],
+        date.fromisoformat(params["from"]),
+        date.fromisoformat(params["to"]),
+        freeze=bool(params.get("freeze")),
+    )
+    lag0 = payload["headline"]["lags"].get("0") or {}
+    return {"id": payload["id"], "kind": payload["kind"], "r": lag0.get("r"), "n": lag0.get("n")}
+
+
 @handler("export")
 def _export(store: Store, config: Config, params: dict) -> dict:
     from murmur import export, pipeline
@@ -385,6 +405,26 @@ def validate(type_: str, params: dict, confirm: bool) -> tuple[dict, str | None]
         clean["keep"] = int(params["keep"])
         if clean["keep"] < 1:
             raise JobError("keep must be >= 1")
+    if type_ == "findings":
+        if params.get("live"):
+            clean["live"] = True
+            if params.get("date"):
+                clean["date"] = _iso(params["date"], "date")
+        else:
+            from murmur.findings import _valid_id
+
+            sid = str(params.get("id") or "")
+            if not sid or sid == "live" or not _valid_id(sid):
+                raise JobError("id is required: letters, digits, '-' or '_' (not 'live')")
+            clean["id"] = sid
+            clean["from"] = _iso(params.get("from"), "from")
+            clean["to"] = _iso(params.get("to"), "to")
+            if clean["to"] < clean["from"]:
+                raise JobError("to must not be before from")
+            if params.get("freeze"):
+                if not confirm:
+                    raise JobError("freeze publishes the snapshot for good; send confirm=true")
+                clean["freeze"] = True
     if type_ == "delete_analysis":
         clean["date"] = _iso(params.get("date"), "date")
     if type_ == "delete_scores":
@@ -488,6 +528,7 @@ RESUMABLE = {
     "universe",
     "backup",
     "vacuum",
+    "findings",
 }
 """Job types a restart re-queues when it finds them interrupted: all idempotent, so
 re-running picks up where the store already is. ``run`` is not: the scheduler's catch-up

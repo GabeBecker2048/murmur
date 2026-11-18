@@ -1,0 +1,291 @@
+{
+ "data_version": "1.0.0",
+ "datasets": {
+  "companies": {
+   "companies": {
+    "columns": [
+     "cik",
+     "ticker",
+     "name",
+     "exchange",
+     "country",
+     "first_month",
+     "last_month",
+     "months",
+     "snapshot_month"
+    ],
+    "key": [
+     "cik",
+     "ticker"
+    ],
+    "cadence": "monthly"
+   }
+  },
+  "m100": {
+   "constituents": {
+    "columns": [
+     "month",
+     "effective_date",
+     "rank",
+     "cik",
+     "ticker",
+     "name",
+     "exchange",
+     "market_cap",
+     "weight",
+     "reconstructed"
+    ],
+    "key": [
+     "month",
+     "cik",
+     "ticker"
+    ],
+    "cadence": "monthly"
+   },
+   "changes": {
+    "columns": [
+     "month",
+     "cik",
+     "ticker",
+     "name",
+     "action",
+     "rank"
+    ],
+    "key": [
+     "month",
+     "cik",
+     "ticker",
+     "action"
+    ],
+    "cadence": "monthly"
+   },
+   "level": {
+    "columns": [
+     "date",
+     "level",
+     "return",
+     "constituents",
+     "priced",
+     "weight_priced",
+     "rebalance"
+    ],
+    "key": [
+     "date"
+    ],
+    "cadence": "daily"
+   },
+   "contributions": {
+    "columns": [
+     "date",
+     "cik",
+     "ticker",
+     "weight",
+     "return",
+     "contribution",
+     "points"
+    ],
+    "key": [
+     "date",
+     "ticker"
+    ],
+    "cadence": "daily"
+   }
+  },
+  "prices": {
+   "prices": {
+    "columns": [
+     "cik",
+     "ticker",
+     "date",
+     "open",
+     "high",
+     "low",
+     "close",
+     "adj_close",
+     "volume",
+     "source",
+     "prev_date",
+     "prev_close",
+     "split_ratio",
+     "overnight",
+     "intraday",
+     "daily"
+    ],
+    "key": [
+     "ticker",
+     "date"
+    ],
+    "cadence": "daily"
+   }
+  },
+  "news": {
+   "articles": {
+    "columns": [
+     "article_id",
+     "cik",
+     "ticker",
+     "title",
+     "url",
+     "publisher",
+     "content_type",
+     "source",
+     "sources",
+     "published_at",
+     "first_seen_at",
+     "trading_day",
+     "window",
+     "positive",
+     "negative",
+     "neutral",
+     "label",
+     "score",
+     "model"
+    ],
+    "key": [
+     "article_id",
+     "ticker"
+    ],
+    "cadence": "daily"
+   }
+  },
+  "sentiment": {
+   "sentiment": {
+    "columns": [
+     "date",
+     "cik",
+     "ticker",
+     "window",
+     "source",
+     "model",
+     "n_articles",
+     "mean_score"
+    ],
+    "key": [
+     "date",
+     "source",
+     "ticker",
+     "window"
+    ],
+    "cadence": "daily"
+   }
+  },
+  "correlations": {
+   "daily": {
+    "columns": [
+     "date",
+     "window",
+     "return_type",
+     "lag",
+     "scope",
+     "source",
+     "method",
+     "model",
+     "n",
+     "estimate",
+     "p_value",
+     "ci_low",
+     "ci_high",
+     "tickers",
+     "computed_at"
+    ],
+    "key": [
+     "date",
+     "window",
+     "return_type",
+     "lag",
+     "scope",
+     "source",
+     "method",
+     "model"
+    ],
+    "cadence": "daily"
+   },
+   "rolling": {
+    "columns": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source",
+     "method",
+     "n",
+     "estimate",
+     "p_value",
+     "ci_low",
+     "ci_high",
+     "computed_at"
+    ],
+    "key": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source",
+     "method"
+    ],
+    "cadence": "daily"
+   },
+   "placebo": {
+    "columns": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source",
+     "n",
+     "real_r",
+     "null_mean",
+     "null_sd",
+     "null_low",
+     "null_high",
+     "z",
+     "p_perm",
+     "permutations",
+     "computed_at"
+    ],
+    "key": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source"
+    ],
+    "cadence": "daily"
+   },
+   "rolling_tickers": {
+    "columns": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source",
+     "cik",
+     "ticker",
+     "method",
+     "n",
+     "estimate",
+     "p_value",
+     "ci_low",
+     "ci_high",
+     "computed_at"
+    ],
+    "key": [
+     "as_of",
+     "months",
+     "window",
+     "return_type",
+     "lag",
+     "source",
+     "ticker",
+     "method"
+    ],
+    "cadence": "monthly"
+   }
+  }
+ }
+}
