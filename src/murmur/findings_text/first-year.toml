@@ -18,7 +18,7 @@ summary = [
 caveats = [
   "Correlation is not causation. A same-day link fits news reporting moves that happen during the day, prices reacting to news, or both; daily data cannot tell them apart.",
   "A correlation of 0.163 is real but small: headline sentiment accounts for about 2.6 % of the variation in daily returns.",
-  "One source: these findings use Finnhub's company news only. Yahoo headlines, collected from 5 November 2026 on, are left out so the whole year is measured the same way; the live figures on the dashboard use both.",
+  "One source: these findings use Finnhub's company news only; Yahoo headlines were not used.",
   "Index months before October 2026 were reconstructed from today's list of large US companies, so a company that shrank or was delisted during the year is missing (survivorship bias).",
   "Sentiment is FinBERT's reading of the headline only, not the article; returns come from daily bars, so the overnight and intraday windows are cut at the 09:30 and 16:00 bells.",
 ]

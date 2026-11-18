@@ -4,6 +4,19 @@
 
 import { api, el, clear, fmt, setTitle, link, badge, state, navigate } from "../lib.js";
 
+/** When each dataset is delivered. The pipeline runs every evening at 18:00 New York
+ * time and publishes within about 15 minutes. Shared with the Data page. */
+export const DELIVERY = {
+  news: "Every trading day by about 18:15 New York time. The previous session's file also picks up late headlines the next evening.",
+  sentiment: "Every trading day by about 18:15 New York time.",
+  prices: "Every trading day after the close, by about 18:15 New York time.",
+  correlations: "Every trading day by about 18:15 New York time; a session gains its next-day (lag +1) pairs the following trading day. Per-company results: one file per month, updated daily, final after the month's last session.",
+  m100: "Constituents and changes: on the evening of each month's first trading day. Daily level and contributions: every trading day by about 18:15 New York time.",
+  companies: "On the evening of each month's first trading day.",
+  archives: "Each month's archive on the evening of the 1st of the following month.",
+  findings: "A snapshot when a new conclusion is published; never changed afterwards.",
+};
+
 /** What each dataset is for, in the words of someone choosing one. The registry's own
  * descriptions (shown on the Data page) are more technical. */
 function guide(indexName, indexTitle) {
@@ -110,6 +123,7 @@ export async function render(main, parts, query) {
       el("p", { class: "pitch", text: g.pitch }),
       el("ul", {}, g.rows.map((r) => el("li", { text: r }))),
       el("p", { class: "for", text: g.for }),
+      el("p", { class: "delivery small" }, el("strong", { text: "Delivered: " }), DELIVERY[g.name === indexName ? "m100" : g.name] || ""),
       el(
         "p",
         { class: "faint small" },

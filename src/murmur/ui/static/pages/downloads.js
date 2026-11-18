@@ -1,7 +1,8 @@
 // Data: build a bundle of any date range, take a ready-made monthly archive, use the
 // stable latest URLs, or browse every file. The builder's choices live in the URL.
 
-import { api, qs, el, card, clear, table, fmt, setTitle, field, segmented, badge, navigate, link, codeBlock } from "../lib.js";
+import { api, qs, el, card, clear, table, fmt, setTitle, field, segmented, badge, navigate, link, codeBlock, state } from "../lib.js";
+import { DELIVERY } from "./overview.js";
 
 const iso = (d) => d.toISOString().slice(0, 10);
 function minus(dateIso, { months = 0, days = 0 }) {
@@ -152,6 +153,29 @@ export async function render(main, parts, query) {
     const ds = manifest.datasets && manifest.datasets[d.name];
     for (const t of Object.keys((ds && ds.tables) || {})) latestRows.push({ dataset: d.name, table: t });
   }
+  const idxName = (state.ui && state.ui.index && state.ui.index.name) || "m100";
+  const scheduleRows = [
+    ...all.map((d) => ({ what: d.title, cadence: d.cadence, when: DELIVERY[d.name === idxName ? "m100" : d.name] || "" })),
+    { what: "Monthly archives", cadence: "monthly", when: DELIVERY.archives },
+    { what: "Findings", cadence: "snapshot", when: DELIVERY.findings },
+  ];
+  const scheduleCard = card(
+    "When the data arrives",
+    el(
+      "div",
+      {},
+      el("p", { class: "muted small", text: "The pipeline runs every evening at 18:00 New York time (America/New_York), weekends included, and publishes within about 15 minutes. Weekends and market holidays add headlines to the next trading session; they get no prices or analysis of their own." }),
+      table(
+        [
+          { label: "Dataset", value: (r) => r.what },
+          { label: "Cadence", value: (r) => r.cadence },
+          { label: "Delivered", value: (r) => r.when },
+        ],
+        scheduleRows,
+        { compact: true },
+      ),
+    ),
+  );
   const latestCard = card(
     "Always the newest",
     el(
@@ -205,7 +229,7 @@ export async function render(main, parts, query) {
         ".",
       ),
     ),
-    el("div", { class: "stack" }, builder, el("div", { class: "split" }, latestCard, archivesCard), card("Every file", browse, { sub: "Day files, monthly files and compacted months, with each dataset's columns and license" })),
+    el("div", { class: "stack" }, builder, scheduleCard, el("div", { class: "split" }, latestCard, archivesCard), card("Every file", browse, { sub: "Day files, monthly files and compacted months, with each dataset's columns and license" })),
   );
   if (lastDay) update();
 }

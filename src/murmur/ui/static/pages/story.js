@@ -54,6 +54,8 @@ const TIMELINE = [
     now: true,
     body: [
       "Gabe, a data engineer by trade, picked the project back up and rebuilt it from scratch as a production pipeline: a daily job on a home server, a year of history backfilled, a finance-trained language model reading every headline, open datasets anyone can download, and this dashboard. Version 0.1.0 to 0.9.0 took two weeks.",
+      "For the first time the answer is concrete. The prototype's results had been inconclusive; a full year of data, checked against the market's own moves, a day-by-day estimate and shuffled headlines, now gives a clear answer: news moves with stock prices on the same day and trails them a little, but does not predict the next day.",
+      "All three friends agreed to publish it in the open: the code, the data and the findings, free for anyone to use, study and build on.",
       "The question is the same one the three friends started with.",
     ],
   },

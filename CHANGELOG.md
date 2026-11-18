@@ -4,6 +4,19 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.9.2] - 2026-11-18
+
+### Added
+
+- When each dataset is delivered: a schedule on the Data page and a "Delivered" line on
+  every Overview dataset card.
+
+### Changed
+
+- Findings: no per-source split; the one-source caveat only says Yahoo was not used.
+- Story: the rebuild's concrete findings (the prototype's were inconclusive), and all
+  three friends' agreement to publish the project openly.
+
 ## [0.9.1] - 2026-11-18
 
 An introduction, the story, a README worth reading, and findings from one source over
