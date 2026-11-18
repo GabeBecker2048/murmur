@@ -7,6 +7,8 @@ contents of a version may change before it ships. Shipped versions will be in
 ## 1.0.0 - public release - planned
 
 - Only after the original contributors have agreed to publishing.
+- The moment the repository is public: protect `main` (no direct or force pushes,
+  merge only through a pull request). GitHub refuses this on a private repo without Pro.
 - Hugging Face mirror: the daily job pushes the day's files; the layout on
   HF matches `/data/`. A Zenodo DOI for the 1.0 snapshot.
 
