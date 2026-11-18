@@ -1179,19 +1179,25 @@ class Store:
             (start, end),
         ).fetchall()
 
-    def findings_coverage(self, start: str, end: str, model: str) -> dict:
-        """Sessions, companies and scored headlines in ``[start, end]``, and the index
-        months that were reconstructed rather than built live."""
+    def findings_coverage(self, start: str, end: str, model: str, source: str = "all") -> dict:
+        """Sessions, companies and scored headlines in ``[start, end]`` (of one news source,
+        or every source for ``'all'``), and the index months that were reconstructed
+        rather than built live."""
         sessions, companies = self.conn.execute(
             """SELECT count(DISTINCT w.date), count(DISTINCT w.ticker) FROM window_sentiment w
                JOIN universe_membership u ON u.date = w.date AND u.ticker = w.ticker
-               WHERE w.model = ? AND w.source = 'all' AND w.date >= ? AND w.date <= ?""",
-            (model, start, end),
+               WHERE w.model = ? AND w.source = ? AND w.date >= ? AND w.date <= ?""",
+            (model, source, start, end),
         ).fetchone()
+        by_source = (
+            ""
+            if source == "all"
+            else " AND a.id IN (SELECT article_id FROM article_sources WHERE source = ?)"
+        )
         headlines = self.conn.execute(
-            """SELECT count(*) FROM articles a JOIN sentiment s ON s.article_id = a.id
-               WHERE s.model = ? AND a.trading_day >= ? AND a.trading_day <= ?""",
-            (model, start, end),
+            f"""SELECT count(*) FROM articles a JOIN sentiment s ON s.article_id = a.id
+               WHERE s.model = ? AND a.trading_day >= ? AND a.trading_day <= ?{by_source}""",
+            (model, start, end, *([] if source == "all" else [source])),
         ).fetchone()[0]
         months = [
             r[0]
@@ -1225,6 +1231,10 @@ class Store:
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (id_, kind, start, end, utc_now_iso(), data_version, payload),
             )
+
+    def delete_findings(self, id_: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM findings WHERE id = ? AND kind != 'frozen'", (id_,))
 
     def findings_get(self, id_: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM findings WHERE id = ?", (id_,)).fetchone()

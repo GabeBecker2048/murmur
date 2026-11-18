@@ -66,8 +66,27 @@ with sync_playwright() as p:
     page.on("response", on_response)
     page.set_viewport_size({"width": 1280, "height": 900})
 
-    # ---- findings (home)
+    # ---- overview (home)
     page.goto(BASE + "/")
+    settle(page)
+    step("overview introduces the project", page.locator(".hero-overview h1").count() == 1)
+    step("overview lists six datasets", page.locator(".dataset-card").count() == 6)
+    page.goto(BASE + "/?findings=first-year")
+    settle(page)
+    step(
+        "old /?findings= links land on /findings",
+        "/findings?findings=first-year" in page.url,
+        page.url,
+    )
+    page.goto(BASE + "/story")
+    settle(page)
+    step(
+        "story shows three people and the timeline",
+        page.locator(".person").count() == 3 and page.locator(".timeline li").count() >= 5,
+    )
+
+    # ---- findings
+    page.goto(BASE + "/findings")
     settle(page)
     step(
         "findings hero states the answer", len(page.locator(".hero-findings h1").inner_text()) > 30

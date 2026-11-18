@@ -1,0 +1,24 @@
+# The reviewed prose of findings snapshot "first-year": Finnhub headlines only, sessions
+# 2025-11-11 (Finnhub's first) to 2026-11-10, one full year. Frozen into the snapshot with
+# its numbers; editing this file after the snapshot is frozen changes nothing that was
+# published. Numbers quoted here are rounded from the snapshot (day headlines vs the
+# daily return, Pearson).
+
+title = "The first year"
+
+headline = "News moves with stock prices on the same day and trails them a little, but it does not predict the next day."
+
+summary = [
+  "Over one full year of Finnhub headlines (11 November 2025 to 10 November 2026: 251 trading sessions, 122 companies, about 252,000 scored headlines), the tone of a company's headlines on a trading day correlates with its stock's return that same day at r = 0.16.",
+  "That link is about the company, not the market's mood. Subtracting the whole index's move each day leaves r = 0.15. Taken one day at a time, the correlation across companies averages 0.15 and is positive on 89 % of sessions. Shuffling headlines between companies within each day drops it to 0.02.",
+  "News also trails prices: a company's headlines still lean toward the previous session's move (r = 0.09). It does not lead them: today's headlines against the next session's return give r = −0.008, a 95 % interval that includes zero, and a day-by-day average indistinguishable from zero (t = −1.3).",
+  "The 50 largest companies show a somewhat stronger same-day link (0.18) than ranks 51 to 100 (0.15).",
+]
+
+caveats = [
+  "Correlation is not causation. A same-day link fits news reporting moves that happen during the day, prices reacting to news, or both; daily data cannot tell them apart.",
+  "A correlation of 0.163 is real but small: headline sentiment accounts for about 2.6 % of the variation in daily returns.",
+  "One source: these findings use Finnhub's company news only. Yahoo headlines, collected from 5 November 2026 on, are left out so the whole year is measured the same way; the live figures on the dashboard use both.",
+  "Index months before October 2026 were reconstructed from today's list of large US companies, so a company that shrank or was delisted during the year is missing (survivorship bias).",
+  "Sentiment is FinBERT's reading of the headline only, not the article; returns come from daily bars, so the overnight and intraday windows are cut at the 09:30 and 16:00 bells.",
+]

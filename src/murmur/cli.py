@@ -64,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     f.add_argument("--live", action="store_true", help="recompute the live 12-month row")
     f.add_argument("--list", action="store_true", help="list the stored snapshots")
+    f.add_argument("--source", default="all", help="one news source (e.g. finnhub); default all")
+    f.add_argument("--delete", metavar="ID", help="delete a draft (never a frozen snapshot)")
     e = add("export", "write the day's published files")
     e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
     sv = add(
@@ -243,6 +245,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _findings_command(store, config, args, day) -> int:
     from murmur import findings
 
+    if args.delete:
+        try:
+            findings.delete_draft(store, args.delete)
+        except findings.FindingsError as e:
+            print(f"murmur: {e}", file=sys.stderr)
+            return 1
+        print(f"deleted draft {args.delete}")
+        return 0
     if args.list:
         for r in store.findings_list():
             span = f"{r['start_day']} .. {r['end_day']}"
@@ -262,6 +272,7 @@ def _findings_command(store, config, args, day) -> int:
                 parse_date(args.start),
                 parse_date(args.end),
                 freeze=args.freeze,
+                source=args.source,
             )
     except findings.FindingsError as e:
         print(f"murmur: {e}", file=sys.stderr)

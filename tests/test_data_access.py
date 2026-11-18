@@ -222,7 +222,8 @@ def test_feed_is_valid_atom(client, provider):  # noqa: F811
 
 def test_citation(client):  # noqa: F811
     c = client.get("/api/v1/citation").json()
-    assert c["bibtex"].startswith("@misc{murmur,") and "wyatthbc" in c["bibtex"]
+    assert c["bibtex"].startswith("@misc{murmur,") and "Burch-Celentano, Wyatt" in c["bibtex"]
+    assert c["apa"].startswith("Becker, G., Burch-Celentano, W., & Chapoton, S.")
     assert "cff-version: 1.2.0" in c["cff"] and "Murmur" in c["apa"]
     assert client.get("/api/v1/citation?findings=nope").status_code == 404
 

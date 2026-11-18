@@ -25,7 +25,8 @@ function setupTheme() {
 // ---- router -----------------------------------------------------------------------
 
 const routes = {
-  "": () => import("./pages/findings.js"),
+  "": () => import("./pages/overview.js"),
+  findings: () => import("./pages/findings.js"),
   "news-vs-prices": () => import("./pages/newsvsprices.js"),
   companies: () => import("./pages/companies.js"),
   index: () => import("./pages/index.js"),
@@ -33,6 +34,7 @@ const routes = {
   downloads: () => import("./pages/downloads.js"),
   methodology: () => import("./pages/methodology.js"),
   status: () => import("./pages/status.js"),
+  story: () => import("./pages/story.js"),
   admin: () => import("./pages/admin.js"),
 };
 
@@ -58,7 +60,7 @@ function notFound(main) {
       el("p", { class: "kicker", text: "404" }),
       el("h1", { text: "No such page" }),
       el("p", { class: "muted" }, "The address may be from an older version of the dashboard. "),
-      el("p", {}, link("/", "Read the findings"), " · ", link("/news-vs-prices", "Explore news vs. prices"), " · ", link("/downloads", "Get the data")),
+      el("p", {}, link("/", "Start at the overview"), " · ", link("/findings", "Read the findings"), " · ", link("/downloads", "Get the data")),
     ),
   );
 }

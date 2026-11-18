@@ -22,12 +22,12 @@ from murmur import __version__
 from murmur.clock import utc_now_iso
 
 DATA_VERSION = "1.0.0"
-"""The version of the published data, separate from the software's. Semantic: a major
-bump when a column or table is removed or renamed, or a method change alters values
-already published; a minor bump for a new column, table or dataset; a patch for a fix.
+"""The version of the published data (shown as v1.0.0), separate from the software's. A
+version's schema never changes: if a column, table or dataset is ever added, removed or
+renamed, the whole dataset is republished as the next major version, replacing this one.
 Stamped into every file (``murmur_data_version``), the manifest and every findings
-snapshot. ``docs/data-changelog.md`` records each version; ``docs/stability.md`` is the
-promise; ``tests/test_schema_stability.py`` enforces it."""
+snapshot. ``docs/stability.md`` is the promise; ``tests/test_schema_stability.py``
+enforces it."""
 
 CAP_SIG_FIGS = 3
 WEIGHT_DECIMALS = 4

@@ -76,6 +76,18 @@ Daily headline sentiment of the 100 largest US companies, against their returns.
     )
 
 
+def wordmark_card(dark: bool) -> str:
+    fill, ink = (brand.BLUE_DARK, brand.INK_DARK) if dark else (brand.BLUE, brand.INK)
+    return _page(
+        f"""<div style="width:840px;height:200px;display:flex;align-items:center;gap:22px;
+font-family:'Space Grotesk',sans-serif">
+<svg viewBox="0 0 100 100" width="200" height="200"><g fill="{fill}">{brand.circles(brand.FLOCK)}</g></svg>
+<span style="font-size:124px;font-weight:600;letter-spacing:-4px;color:{ink}">murmur</span></div>""",
+        840,
+        200,
+    )
+
+
 def pngs() -> None:
     from playwright.sync_api import sync_playwright
 
@@ -84,6 +96,9 @@ def pngs() -> None:
         "apple-touch-icon.png": (_icon(brand.FLOCK, 180, brand.BLUE, "#ffffff", 0.14), 180, 180),
         "icon-512.png": (_icon(brand.FLOCK, 512, brand.BLUE, "#ffffff", 0.14), 512, 512),
         "social-card.png": (social_card(), 1200, 630),
+        # for places that cannot load the web font in an SVG (the GitHub README)
+        "wordmark.png": (wordmark_card(False), 840, 200),
+        "wordmark-dark.png": (wordmark_card(True), 840, 200),
     }
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -98,7 +113,10 @@ def pngs() -> None:
                     page.evaluate("document.fonts.load('600 20px \"Space Grotesk\"')")
                     assert page.evaluate("document.fonts.check('600 20px \"Space Grotesk\"')")
                 page.evaluate("document.fonts.ready")
-                page.screenshot(path=str(OUT / name), omit_background=name == "favicon-32.png")
+                page.screenshot(
+                    path=str(OUT / name),
+                    omit_background=name == "favicon-32.png" or name.startswith("wordmark"),
+                )
             page.close()
             print(f"wrote {name}")
         browser.close()

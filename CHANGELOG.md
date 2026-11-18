@@ -4,6 +4,42 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [0.9.1] - 2026-11-18
+
+An introduction, the story, a README worth reading, and findings from one source over
+one full year.
+
+### Added
+
+- **Overview** is the new home page (`/`): what Murmur is in plain words, live counts,
+  the six free datasets and what each contains (for people who only want headlines or
+  an index), the question and the frozen answer, and where to go next. Findings moved to
+  `/findings` (`/?findings=<id>` links go there).
+- **Story** (`/story`): how three friends' 2023 prototype became Murmur, who built
+  what, and the prototype next to today.
+- Findings can be restricted to one news source (`murmur findings --source`, job param
+  `source`); `murmur findings --delete ID` removes a draft (never a frozen snapshot).
+- `docs/operating.md`: the pipeline, configuration, backfills, jobs, deployment and
+  backups, moved from the README. PNG wordmarks for places that cannot load the web font.
+
+### Changed
+
+- The first findings snapshot is now `first-year`: Finnhub headlines only, 11 November
+  2025 (Finnhub's first day in the store) to 10 November 2026, one full year measured
+  the same way throughout (Yahoo headlines, collected from 5 November 2026, are left
+  out). The `2026-10` draft is replaced.
+- The Findings page's "does not predict" check rests on the confidence interval and the
+  day-by-day estimate, and "Since then" compares like with like (the same source, plus
+  all sources).
+- The dataset is **v1.0.0** and its schema is fixed: a change would republish the whole
+  dataset as a new version (`docs/stability.md`, `docs/data-changelog.md`, the pages).
+- README rewritten as the project's front page: logo, badges, screenshots, what it is,
+  what it found, how to get the data or run it, where the docs are.
+- The citation lists the three authors by name.
+- ROADMAP.md now lists only what is still planned.
+- The footer no longer links to the admin area; it stays at `/admin` for whoever has the
+  token.
+
 ## [0.9.0] - 2026-11-18
 
 Ready to show: the answer stated and checked, the data versioned, a dashboard rebuilt

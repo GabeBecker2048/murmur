@@ -27,7 +27,7 @@ async function main() {
     `Correlation of headline sentiment with the daily return, ${doc.coverage.companies} large US companies, ${doc.window.start} to ${doc.window.end}. Grey: the range shuffled headlines produce.`;
   const site = location.origin;
   clear(document.getElementById("embed-credit")).append(
-    el("a", { href: `${site}/${doc.kind === "frozen" ? qs({ findings: doc.id }) : ""}`, target: "_blank", rel: "noopener" }, `Murmur findings ${doc.kind === "live" ? "(live)" : doc.id}`),
+    el("a", { href: `${site}/findings${doc.kind === "frozen" ? qs({ findings: doc.id }) : ""}`, target: "_blank", rel: "noopener" }, `Murmur findings ${doc.kind === "live" ? "(live)" : doc.id}`),
     " · ",
     el("a", { href: "https://creativecommons.org/licenses/by/4.0/", target: "_blank", rel: "noopener" }, "CC BY 4.0"),
   );

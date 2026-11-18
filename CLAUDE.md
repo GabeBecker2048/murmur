@@ -6,9 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Murmur: a daily pipeline that scores news-headline sentiment (FinBERT) for the largest US
 companies, stores it with daily prices in SQLite, and correlates sentiment with returns.
-`ROADMAP.md` is the design document and is authoritative on scope: read its "Decisions"
-section before changing schema, timing, sources or the published layout. `CHANGELOG.md`
-records what shipped. The repo is private and is never published to PyPI
+`ROADMAP.md` lists only what is still planned (1.0, 1.x); `CHANGELOG.md` records what
+shipped. The settled design decisions that used to open ROADMAP.md (universe, timing,
+store, layout, sources, licensing) are in its git history before 0.9.1; the ones still
+binding are restated in this file. The published dataset is **v1.0.0** and its schema
+does not change: any column/table/dataset change means republishing the whole dataset as
+the next major version (docs/stability.md). README.md is the project's front page (kept
+version-agnostic, like Gabe's other projects); operational detail lives in
+docs/operating.md. The repo is private and is never published to PyPI
 (`Private :: Do Not Upload` classifier).
 
 ## Repo rules
@@ -79,7 +84,10 @@ installed metadata (run `uv lock` after the bump; tests compare against pyprojec
   (`pages/index.js` `levelChart`) filters the full level history client-side, keeps the
   range in the query string via `history.replaceState`, and switches the y-axis to
   "change since the first session" when the comparison is on.
-- Findings (0.9.0): `src/murmur/findings.py` (`compute`, `create`, `refresh_live`),
+- Findings (0.9.0; `source=` and `findings --delete` for drafts in 0.9.1): the published
+  snapshot is `first-year` = Finnhub headlines only, 2025-11-11 (Finnhub's first day in
+  the store; no earlier backfill is possible) to 2026-11-10, prose in
+  `findings_text/first-year.toml`. `src/murmur/findings.py` (`compute`, `create`, `refresh_live`),
   table `findings` (v13; kinds draft|frozen|live; `store.put_findings` refuses to replace
   a frozen row), prose in `src/murmur/findings_text/<id>.toml` (required to freeze),
   `pipeline.refresh_live_findings` after rolling/placebo/level (best effort),
@@ -110,7 +118,8 @@ installed metadata (run `uv lock` after the bump; tests compare against pyprojec
   heatmap is a table of buttons), Space Grotesk woff2 (OFL) in `vendor/fonts/` for headings
   and the wordmark. `lib.js` = side-effect-free helpers (`api()`, `el()` textContent-only
   DOM builder, `fmt`, `navigate` (dispatches `murmur:navigate`), `setTitle`, `codeBlock`,
-  theme); `app.js` = the shell only (router, `ALIASES` for old routes, 404 page, theme
+  theme); `app.js` = the shell only (router: `/` Overview, `/findings`, `/story` and the
+  other pages; `ALIASES` for old routes; `/?findings=` goes to /findings; 404 page; theme
   toggle, boot). Pages under `pages/` import `../lib.js` (never `app.js`; a test checks)
   and export `render(main, parts, query)`, optionally returning `{destroy}`. `charts.js`
   wraps Plotly with the CSS tokens (`findingsChart` is shared with `embed.js`/`embed.html`,

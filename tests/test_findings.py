@@ -163,7 +163,7 @@ def test_live_row_is_replaced_daily(store, cfg):
 
 
 def test_the_packaged_first_year_text_is_complete():
-    text = findings.text_for("2026-10")
+    text = findings.text_for("first-year")
     assert text["title"] and text["headline"]
     assert len(text["summary"]) >= 3 and len(text["caveats"]) >= 3
     assert findings.text_for("nope") is None
@@ -236,3 +236,57 @@ def test_api_published_file_and_chart(tmp_path, monkeypatch):
         assert png.status_code == 200 and png.content[:4] == b"\x89PNG"
         assert client.get("/api/v1/charts/findings.png?theme=x").status_code == 422
         assert client.get("/data/findings/latest.json").json()["id"] == "2026-10"
+
+
+def test_one_source_only(store, cfg, monkeypatch):
+    """A snapshot restricted to one news source uses only that source's sentiment: here
+    finnhub carries the company signal and yahoo is noise."""
+    days = seed(store)
+    rng = np.random.default_rng(11)
+    for d in days:
+        iso = d.isoformat()
+        rows = store.window_sentiment_between(iso, iso, MODEL, "all")
+        signal = {r["ticker"]: (2, r["mean_score"]) for r in rows if r["window"] == DAY}
+        store.upsert_window_sentiment(iso, DAY, MODEL, signal, source="finnhub")
+        noise = {t: (1, float(rng.normal())) for t in TICKERS}
+        store.upsert_window_sentiment(iso, DAY, MODEL, noise, source="yahoo")
+    monkeypatch.setattr(findings, "sources_for_analysis", lambda s: ["all", "finnhub", "yahoo"])
+    fin = findings.compute(store, cfg, START, END, permutations=50, source="finnhub")
+    yah = findings.compute(store, cfg, START, END, permutations=50, source="yahoo")
+    assert fin["meta"]["source"] == "finnhub" and fin["coverage"]["sources"] == ["finnhub"]
+    assert fin["headline"]["lags"]["0"]["r"] > 0.5
+    assert abs(yah["headline"]["lags"]["0"]["r"]) < 0.2
+    assert {r["source"] for r in fin["by_source"]} == {"finnhub", "yahoo"}  # comparison kept
+    with pytest.raises(findings.FindingsError, match="no scored nope headlines"):
+        findings.compute(store, cfg, START, END, source="nope")
+
+
+def test_only_drafts_can_be_deleted(store, cfg, monkeypatch):
+    seed(store)
+    findings.create(store, cfg, "d1", START, END, permutations=50)
+    findings.delete_draft(store, "d1")
+    assert store.findings_get("d1") is None
+    monkeypatch.setattr(
+        findings,
+        "text_for",
+        lambda _id: {"title": "T", "headline": "H", "summary": [], "caveats": []},
+    )
+    findings.create(store, cfg, "f1", START, END, freeze=True, permutations=50)
+    findings.refresh_live(store, cfg, END)
+    for sid in ("f1", "live", "nope"):
+        with pytest.raises(findings.FindingsError):
+            findings.delete_draft(store, sid)
+    store.delete_findings("f1")  # the store refuses too
+    assert store.findings_get("f1")["kind"] == "frozen"
+    clean, _ = validate(
+        "findings",
+        {"id": "a", "from": "2026-01-01", "to": "2026-02-01", "source": "finnhub"},
+        False,
+    )
+    assert clean["source"] == "finnhub"
+    with pytest.raises(JobError):
+        validate(
+            "findings",
+            {"id": "a", "from": "2026-01-01", "to": "2026-02-01", "source": "a b"},
+            False,
+        )

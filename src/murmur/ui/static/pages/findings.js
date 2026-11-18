@@ -1,4 +1,4 @@
-// Findings: the answer to the question, as published in a frozen snapshot, with the
+// Findings (/findings): the answer to the question, as published in a frozen snapshot, with the
 // checks behind it, the caveats, how the live numbers compare since, and how to cite,
 // embed or download it.
 
@@ -33,7 +33,7 @@ function rowFor(rows, window, ret, lag) {
 }
 
 export async function render(main, parts, query) {
-  setTitle("");
+  setTitle("Findings");
   const { items, doc } = await pick(query);
   if (!doc) {
     clear(main).append(
@@ -64,7 +64,7 @@ export async function render(main, parts, query) {
       { class: "meta-line" },
       status,
       el("span", { text: `Sessions ${dateText(w.start)} to ${dateText(w.end)}` }),
-      el("span", { text: `· ${fmt.int(doc.coverage.headlines)} headlines · ${doc.coverage.companies} companies` }),
+      el("span", { text: `· ${fmt.int(doc.coverage.headlines)} ${doc.meta && doc.meta.source && doc.meta.source !== "all" ? `${doc.meta.source[0].toUpperCase()}${doc.meta.source.slice(1)} ` : ""}headlines · ${doc.coverage.companies} companies` }),
     ),
   );
 
@@ -123,7 +123,7 @@ export async function render(main, parts, query) {
   const adj0 = rowFor(doc.market_adjusted, "day", "daily", 0);
   const ses0 = rowFor(doc.per_session, "day", "daily", 0);
   const pl0 = (doc.placebo || []).find((x) => x.lag === 0);
-  const pl1 = (doc.placebo || []).find((x) => x.lag === 1);
+  const ses1 = rowFor(doc.per_session, "day", "daily", 1);
   const check = (ok, what, how, figure) =>
     el("li", {}, el("span", { class: `mark ${ok ? "" : "fail"}`, "aria-hidden": "true", text: ok ? "✓" : "–" }), el("div", {}, el("div", { class: "what", text: what }), el("div", { class: "how", text: how })), el("span", { class: "figure", text: figure }));
   const checks = el(
@@ -132,7 +132,14 @@ export async function render(main, parts, query) {
     pl0 ? check(pl0.real_r > pl0.null_high, "It is about the right company", `Shuffling headlines between companies within each session gives r between ${fmt.r(pl0.null_low)} and ${fmt.r(pl0.null_high)}.`, `${fmt.r(pl0.real_r)} vs ${fmt.r(pl0.null_mean)}`) : null,
     adj0 ? check(adj0.r > 0 && adj0.ci_low > 0, "It is not the market's mood", "Taking each day's index move out of every return.", fmt.r(adj0.r)) : null,
     ses0 ? check(ses0.t > 3, "It holds day after day", `The same-session correlation, computed each session on its own, is positive on ${Math.round(ses0.share_positive * 100)} % of ${ses0.sessions} sessions (t = ${ses0.t.toFixed(1)}).`, fmt.r(ses0.mean_r)) : null,
-    pl1 ? check(pl1.real_r <= pl1.null_high, "News does not predict tomorrow", `Today's headlines against the next session's return fall inside the shuffled range (${fmt.r(pl1.null_low)} to ${fmt.r(pl1.null_high)}).`, fmt.r(pl1.real_r)) : null,
+    head["1"] && ses1
+      ? check(
+          head["1"].ci_low <= 0 && head["1"].ci_high >= 0 && Math.abs(ses1.t) < 2,
+          "News does not predict tomorrow",
+          `Today's headlines against the next session's return: the 95 % interval (${fmt.r(head["1"].ci_low)} to ${fmt.r(head["1"].ci_high)}) includes zero, and so does the day-by-day estimate (t = ${ses1.t.toFixed(1)}).`,
+          fmt.r(head["1"].r),
+        )
+      : null,
   );
   const sureCard = card("How sure are we?", el("div", {}, checks, lag0 ? el("p", { class: "chart-note", text: `r = ${fmt.r(lag0.r)} means headline tone accounts for about ${(lag0.r * lag0.r * 100).toFixed(1)} % of the variation in daily returns: real, and small.` }) : null));
 
@@ -163,21 +170,24 @@ export async function render(main, parts, query) {
   // ---- since then (live)
   let sinceCard = null;
   if (live && doc.kind !== "live") {
-    const rows = LAGS.map((l) => [l, head[String(l)], live.headline.lags[String(l)]]);
+    const src = (doc.meta && doc.meta.source) || "all";
+    const liveSame = (l) =>
+      src === "all" ? live.headline.lags[String(l)] : (live.by_source || []).find((x) => x.source === src && x.lag === l && x.r !== undefined);
+    const rows = LAGS.map((l) => [l, head[String(l)], liveSame(l), live.headline.lags[String(l)]]);
     sinceCard = card(
       "Since then",
       el(
         "div",
         {},
-        el("p", { class: "muted", text: `The same numbers over the last 12 months, recomputed every trading day (to ${dateText(live.window.end)}). The findings above never change; this does.` }),
+        el("p", { class: "muted", text: `The same numbers over the last 12 months, recomputed every trading day (to ${dateText(live.window.end)}). The findings above never change; these do. The live figures use every news source; the first column of them uses the same source as the findings, for a like-for-like comparison.` }),
         el(
           "div",
           { class: "table-wrap compact" },
           el(
             "table",
             {},
-            el("thead", {}, el("tr", {}, ["", "Findings", "Last 12 months"].map((h, i) => el("th", { class: i ? "num" : "", text: h })))),
-            el("tbody", {}, rows.map(([l, a, b]) => el("tr", {}, el("td", { text: ["News after the move", "Same session", "News before the move"][l + 1] }), el("td", { class: "num", text: a ? fmt.r(a.r) : "–" }), el("td", { class: "num", text: b ? fmt.r(b.r) : "–" })))),
+            el("thead", {}, el("tr", {}, ["", src === "all" ? "Findings" : `Findings (${src})`, ...(src === "all" ? ["Last 12 months"] : [`Last 12 months (${src})`, "Last 12 months (all sources)"])].map((h, i) => el("th", { class: i ? "num" : "", text: h })))),
+            el("tbody", {}, rows.map(([l, a, b, c]) => el("tr", {}, el("td", { text: ["News after the move", "Same session", "News before the move"][l + 1] }), el("td", { class: "num", text: a ? fmt.r(a.r) : "–" }), el("td", { class: "num", text: b ? fmt.r(b.r) : "–" }), src === "all" ? null : el("td", { class: "num", text: c ? fmt.r(c.r) : "–" })))),
           ),
         ),
       ),
@@ -210,7 +220,7 @@ export async function render(main, parts, query) {
 
   // ---- other snapshots
   const others = items.filter((x) => x.kind === "frozen" && x.id !== doc.id);
-  const othersNote = others.length ? el("p", { class: "muted small" }, "Earlier findings: ", others.map((x, i) => [i ? ", " : "", link(`/?findings=${x.id}`, `${x.id} (${x.start_day} to ${x.end_day})`)])) : null;
+  const othersNote = others.length ? el("p", { class: "muted small" }, "Earlier findings: ", others.map((x, i) => [i ? ", " : "", link(`/findings?findings=${x.id}`, `${x.id} (${x.start_day} to ${x.end_day})`)])) : null;
 
   clear(main).append(
     hero,

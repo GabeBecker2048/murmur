@@ -198,7 +198,7 @@ export async function render(main, parts, query) {
       el(
         "p",
         { class: "lede" },
-        `Everything Murmur publishes, from ${first || "–"} to ${last || "–"}: free to use under CC BY 4.0 (prices: the source's terms). Data version ${manifest.data_version || "–"}; see `,
+        `Everything Murmur publishes, from ${first || "–"} to ${last || "–"}: free to use under CC BY 4.0 (prices: the source's terms). Dataset ${manifest.data_version ? `v${manifest.data_version}` : "v1.0.0"}; see `,
         link("/methodology#versions", "what stays stable"),
         ". How to read it: ",
         el("a", { href: "https://github.com/GabeBecker2048/murmur/blob/main/docs/quickstart.md" }, "quick start"),
