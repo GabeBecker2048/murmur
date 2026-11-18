@@ -9,7 +9,7 @@ from pathlib import Path
 
 from murmur.models import Article, PriceBar, SentimentScores, Split, UniverseMember, normalize_title
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # One entry per schema version; applied in order on open. Never edit a shipped entry.
 MIGRATIONS: dict[int, str] = {
@@ -350,6 +350,20 @@ MIGRATIONS: dict[int, str] = {
         source     TEXT NOT NULL,
         fetched_at TEXT NOT NULL,
         PRIMARY KEY (symbol, date)
+    );
+    """,
+    13: """
+    -- 0.9.0: findings snapshots. A frozen row is the published conclusion over one
+    -- window (numbers + reviewed prose as one JSON payload) and is never replaced; a
+    -- draft can be; the single 'live' row is recomputed after each trading day.
+    CREATE TABLE findings (
+        id           TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL CHECK (kind IN ('draft', 'frozen', 'live')),
+        start_day    TEXT NOT NULL,
+        end_day      TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        data_version TEXT NOT NULL,
+        payload      TEXT NOT NULL
     );
     """,
 }
@@ -1155,6 +1169,77 @@ class Store:
 
     def latest_placebo_as_of(self) -> str | None:
         return self.conn.execute("SELECT max(as_of) FROM placebo").fetchone()[0]
+
+    # -- findings ---------------------------------------------------------------
+
+    def membership_between(self, start: str, end: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT date, ticker, market_cap, rank FROM universe_membership
+               WHERE date >= ? AND date <= ? ORDER BY date, ticker""",
+            (start, end),
+        ).fetchall()
+
+    def findings_coverage(self, start: str, end: str, model: str) -> dict:
+        """Sessions, companies and scored headlines in ``[start, end]``, and the index
+        months that were reconstructed rather than built live."""
+        sessions, companies = self.conn.execute(
+            """SELECT count(DISTINCT w.date), count(DISTINCT w.ticker) FROM window_sentiment w
+               JOIN universe_membership u ON u.date = w.date AND u.ticker = w.ticker
+               WHERE w.model = ? AND w.source = 'all' AND w.date >= ? AND w.date <= ?""",
+            (model, start, end),
+        ).fetchone()
+        headlines = self.conn.execute(
+            """SELECT count(*) FROM articles a JOIN sentiment s ON s.article_id = a.id
+               WHERE s.model = ? AND a.trading_day >= ? AND a.trading_day <= ?""",
+            (model, start, end),
+        ).fetchone()[0]
+        months = [
+            r[0]
+            for r in self.conn.execute(
+                """SELECT DISTINCT month FROM universe_months WHERE method = 'reconstructed'
+                   AND month >= ? AND month <= ? ORDER BY month""",
+                (start[:7], end[:7]),
+            )
+        ]
+        return {
+            "sessions": sessions,
+            "companies": companies,
+            "headlines": headlines,
+            "reconstructed_months": months,
+        }
+
+    def put_findings(
+        self, id_: str, kind: str, start: str, end: str, data_version: str, payload: str
+    ) -> None:
+        """Insert or replace a findings row; a frozen row is never replaced."""
+        from murmur.clock import utc_now_iso
+
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            row = self.conn.execute("SELECT kind FROM findings WHERE id = ?", (id_,)).fetchone()
+            if row is not None and row["kind"] == "frozen":
+                raise ValueError(f"findings {id_} are frozen")
+            self.conn.execute(
+                """INSERT OR REPLACE INTO findings
+                   (id, kind, start_day, end_day, created_at, data_version, payload)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (id_, kind, start, end, utc_now_iso(), data_version, payload),
+            )
+
+    def findings_get(self, id_: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM findings WHERE id = ?", (id_,)).fetchone()
+
+    def findings_list(self) -> list[sqlite3.Row]:
+        """Every snapshot without its payload, newest window first."""
+        return self.conn.execute(
+            """SELECT id, kind, start_day, end_day, created_at, data_version FROM findings
+               ORDER BY end_day DESC, created_at DESC"""
+        ).fetchall()
+
+    def latest_frozen_findings(self) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM findings WHERE kind = 'frozen' ORDER BY end_day DESC, created_at DESC"
+        ).fetchone()
 
     def prune_rolling_tickers(self, keep_sessions: int) -> int:
         """Delete per-ticker rolling rows older than the ``keep_sessions`` most recent

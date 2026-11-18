@@ -12,6 +12,8 @@ Murmur publishes Parquet files under `/data`, organised by dataset:
 
 `/data/index.json` lists every file with its rows, size and date. Add `?format=csv` to any `.parquet` URL for CSV. Every file carries its license in the Parquet footer metadata (`license`, `notice`, `attribution`, `contact`), and `/data` responses repeat it as `Link` and `X-Murmur-*` headers. A table with no rows for a period has no file.
 
+Each footer also records `murmur_data_version`, the version of the published data (see [stability.md](stability.md) and [data-changelog.md](data-changelog.md)), `murmur_version` (the software that wrote it) and `murmur_period`. Frozen findings snapshots are JSON files at `findings/<id>.json`, the newest also at `findings/latest.json`.
+
 ## `companies`: Companies
 
 Every company ranked up to the snapshot month: CIK (the durable identity), latest ticker and name, exchange, country, first and last month ranked. The join key supplier for every other dataset.

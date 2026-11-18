@@ -36,7 +36,15 @@ from pathlib import Path
 from murmur import __version__
 from murmur.clock import DAY, first_trading_day, month_key, today_in, utc_now_iso
 from murmur.config import Config
-from murmur.publish import cc_by, cc_by_scored, file_metadata, round_cap, round_weight, source_terms
+from murmur.publish import (
+    DATA_VERSION,
+    cc_by,
+    cc_by_scored,
+    file_metadata,
+    round_cap,
+    round_weight,
+    source_terms,
+)
 from murmur.store import Store
 from murmur.universe import applicable_month
 
@@ -575,6 +583,7 @@ def export_day(store: Store, config: Config, day: date, today: date | None = Non
 
     written += export_month(store, config, applicable_month(day))
     written += compact_finished_months(base, config, month_key(today))
+    written += export_findings(store, config)
     written.append(write_index(base, config))
     log.info("export: %d files for %s under %s", len(written), iso, base)
     return written
@@ -762,6 +771,62 @@ def rebuild_month(store: Store, config: Config, month: str) -> list[Path]:
     return sorted(p for p in set(written) if p.exists())
 
 
+# -- findings -------------------------------------------------------------------
+
+FINDINGS_DIR = "findings"
+
+
+def export_findings(store: Store, config: Config) -> list[Path]:
+    """Write every frozen findings snapshot as ``findings/<id>.json`` (with its license
+    block) and the newest one again as ``findings/latest.json``. A frozen snapshot never
+    changes, so an existing file is left alone; drafts and the live row are not
+    published."""
+    base = config.published_dir / FINDINGS_DIR
+    written: list[Path] = []
+    rows = [r for r in store.findings_list() if r["kind"] == "frozen"]
+    if not rows:
+        return written
+    base.mkdir(parents=True, exist_ok=True)
+    license = cc_by(config.datasets.contact)
+    for i, r in enumerate(rows):  # newest window first
+        doc = json.loads(store.findings_get(r["id"])["payload"])
+        body = json.dumps({"license": license, **doc}, indent=1) + "\n"
+        targets = [base / f"{r['id']}.json"] + ([base / "latest.json"] if i == 0 else [])
+        for path in targets:
+            if path.exists() and path.read_text(encoding="utf-8") == body:
+                continue
+            tmp = path.with_suffix(".json.part")
+            tmp.write_text(body, encoding="utf-8")
+            tmp.replace(path)
+            written.append(path)
+    return written
+
+
+def _findings_manifest(base: Path) -> list[dict]:
+    root = base / FINDINGS_DIR
+    out = []
+    if not root.is_dir():
+        return out
+    for path in sorted(root.glob("*.json")):
+        if path.name == "latest.json":
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        out.append(
+            {
+                "id": doc.get("id", path.stem),
+                "title": (doc.get("text") or {}).get("title"),
+                "start": doc.get("window", {}).get("start"),
+                "end": doc.get("window", {}).get("end"),
+                "path": path.relative_to(base).as_posix(),
+                "bytes": path.stat().st_size,
+            }
+        )
+    return sorted(out, key=lambda f: f["end"] or "", reverse=True)
+
+
 # -- manifest -----------------------------------------------------------------
 
 
@@ -826,6 +891,7 @@ def manifest(base: Path, config: Config) -> dict:
         }
     return {
         "murmur_version": __version__,
+        "data_version": DATA_VERSION,
         "generated_at": utc_now_iso(),
         "licensing": (
             "Each dataset carries its own license block; the same text is stamped into every "
@@ -838,6 +904,14 @@ def manifest(base: Path, config: Config) -> dict:
             "csv": "append ?format=csv to any .parquet URL",
         },
         "datasets": out,
+        "findings": {
+            "description": (
+                "Frozen findings snapshots: the conclusion over a window, numbers and prose, "
+                "never changed once published. findings/latest.json is the newest."
+            ),
+            "license": cc_by(config.datasets.contact),
+            "files": _findings_manifest(base),
+        },
     }
 
 

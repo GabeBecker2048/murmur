@@ -111,3 +111,81 @@ def pick_horizon(pooled_rows: Sequence[dict], horizons: Sequence[int]) -> tuple[
         if rows and all((w, t, lag) in rows for w, t in MATCHED for lag in LAGS):
             return h, rows
     return None
+
+
+def findings(payload: dict, theme: str = "light") -> bytes:
+    """The Findings chart as an image (embeds that cannot take an iframe, link
+    previews): day news vs the daily return at lags -1, 0 and +1 with 95 % confidence
+    bars, the range shuffled headlines produce shaded behind each lag, and the
+    attribution the CC BY license asks for in the corner."""
+    dark = theme == "dark"
+    ink, muted, surface, accent, band = (
+        ("#f0efec", "#c3c2b7", "#141413", "#3987e5", "#383835")
+        if dark
+        else ("#0b0b0b", "#52514e", "#fcfcfb", "#2a78d6", "#e1e0d9")
+    )
+    lags = payload["headline"]["lags"]
+    placebo = {p["lag"]: p for p in payload.get("placebo", [])}
+    fig = _figure(8, 4.5)
+    fig.set_facecolor(surface)
+    ax = fig.add_subplot()
+    ax.set_facecolor(surface)
+    xs, ys, lo, hi = [], [], [], []
+    for lag in LAGS:
+        row = lags.get(str(lag))
+        if not row:
+            continue
+        if lag in placebo:
+            p = placebo[lag]
+            ax.fill_between(
+                [lag - 0.18, lag + 0.18], p["null_low"], p["null_high"], color=band, linewidth=0
+            )
+        xs.append(lag)
+        ys.append(row["r"])
+        lo.append(row["r"] - (row["ci_low"] if row["ci_low"] is not None else row["r"]))
+        hi.append((row["ci_high"] if row["ci_high"] is not None else row["r"]) - row["r"])
+    ax.errorbar(xs, ys, yerr=[lo, hi], fmt="o", markersize=9, capsize=4, color=accent, lw=2)
+    for x, y in zip(xs, ys, strict=True):
+        ax.annotate(
+            f"r = {y:+.3f}",
+            (x, y),
+            xytext=(14, 6),
+            textcoords="offset points",
+            color=ink,
+            fontsize=10,
+        )
+    ax.axhline(0, color=muted, linewidth=0.8)
+    ax.set_xlim(-1.6, 1.6)
+    ax.set_xticks(list(LAGS))
+    ax.set_xticklabels(
+        [
+            "News after the move\n(follows prices)",
+            "Same session\n(moves together)",
+            "News before the move\n(predicts prices)",
+        ],
+        color=ink,
+    )
+    ax.set_ylabel("correlation (Pearson r)", color=muted)
+    ax.tick_params(colors=muted)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(muted)
+    w = payload["window"]
+    ax.set_title(
+        "Headline sentiment vs the stock's daily return",
+        loc="left",
+        color=ink,
+        fontsize=13,
+        fontweight="bold",
+    )
+    fig.text(
+        0.01,
+        0.01,
+        f"Murmur findings {payload.get('id', '')}, {w['start']} to {w['end']}. Grey: range of "
+        "shuffled headlines. CC BY 4.0, murmur (github.com/GabeBecker2048/murmur)",
+        color=muted,
+        fontsize=7,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    return _png(fig)

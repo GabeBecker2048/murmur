@@ -104,6 +104,29 @@ Day Articles
 | `limit` | query | integer | 50 |
 | `offset` | query | integer | 0 |
 
+## findings
+
+### `GET /api/v1/charts/findings.png`
+
+The Findings chart as a PNG, for embedding where an iframe is not allowed.
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `id` | query | string | "latest" |
+| `theme` | query | string | "light" |
+
+### `GET /api/v1/findings`
+
+Every findings snapshot (without numbers): ``frozen`` ones are published and never change, ``draft`` ones are under review, ``live`` is recomputed daily.
+
+### `GET /api/v1/findings/{findings_id}`
+
+One snapshot with every figure and its prose. ``latest`` = the newest frozen one, ``live`` = the last 12 months, recomputed after each trading day.
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `findings_id` | path | string |  |
+
 ## index
 
 ### `GET /api/v1/index/{name}`

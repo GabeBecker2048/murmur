@@ -21,6 +21,14 @@ from typing import Any
 from murmur import __version__
 from murmur.clock import utc_now_iso
 
+DATA_VERSION = "1.0.0"
+"""The version of the published data, separate from the software's. Semantic: a major
+bump when a column or table is removed or renamed, or a method change alters values
+already published; a minor bump for a new column, table or dataset; a patch for a fix.
+Stamped into every file (``murmur_data_version``), the manifest and every findings
+snapshot. ``docs/data-changelog.md`` records each version; ``docs/stability.md`` is the
+promise; ``tests/test_schema_stability.py`` enforces it."""
+
 CAP_SIG_FIGS = 3
 WEIGHT_DECIMALS = 4
 ROUNDED_KEYS = ("market_cap", "weight")
@@ -88,6 +96,7 @@ def file_metadata(dataset: str, table: str, license: Mapping, extra: Mapping | N
         "murmur_dataset": dataset,
         "murmur_table": table,
         "murmur_version": __version__,
+        "murmur_data_version": DATA_VERSION,
         "murmur_generated_at": utc_now_iso(),
         "license": str(license.get("name", "")),
         "license_url": str(license.get("url", "")),

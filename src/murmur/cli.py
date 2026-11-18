@@ -55,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recompute every day with returns (after a schema change)",
     )
+    f = add("findings", "compute a findings snapshot (the conclusion over a window)")
+    f.add_argument("--id", help="snapshot id, e.g. 2026-10 (prose: findings_text/<id>.toml)")
+    f.add_argument("--from", dest="start", metavar="YYYY-MM-DD", help="first sentiment session")
+    f.add_argument("--to", dest="end", metavar="YYYY-MM-DD", help="last sentiment session")
+    f.add_argument(
+        "--freeze", action="store_true", help="freeze it: published, never replaced again"
+    )
+    f.add_argument("--live", action="store_true", help="recompute the live 12-month row")
+    f.add_argument("--list", action="store_true", help="list the stored snapshots")
     e = add("export", "write the day's published files")
     e.add_argument("--all", action="store_true", help="rebuild the published tree for every day")
     sv = add(
@@ -202,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"  {c.window:<9} {c.return_type:<9} lag {c.lag:+d} {c.method:<8} "
                     f"{c.estimate:+.3f}{ci}  p={c.p_value:.3f}  n={c.n}"
                 )
+        elif args.command == "findings":
+            return _findings_command(store, config, args, day)
         elif args.command == "export":
             paths = (
                 pipeline.export_all(store, config)
@@ -219,6 +230,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{r['id']:4d} {r['date']} {r['trigger']:<8} #{r['attempt']} "
                     f"{r['started_at']} -> {r['finished_at'] or '…'}  {status}"
                 )
+    return 0
+
+
+def _findings_command(store, config, args, day) -> int:
+    from murmur import findings
+
+    if args.list:
+        for r in store.findings_list():
+            span = f"{r['start_day']} .. {r['end_day']}"
+            print(f"{r['id']:<12} {r['kind']:<7} {span}  {r['created_at']}")
+        return 0
+    try:
+        if args.live:
+            payload = findings.refresh_live(store, config, day)
+        elif not (args.id and args.start and args.end):
+            print("murmur: findings needs --id, --from, --to (or --live/--list)", file=sys.stderr)
+            return 2
+        else:
+            payload = findings.create(
+                store,
+                config,
+                args.id,
+                parse_date(args.start),
+                parse_date(args.end),
+                freeze=args.freeze,
+            )
+    except findings.FindingsError as e:
+        print(f"murmur: {e}", file=sys.stderr)
+        return 1
+    if payload is None:
+        print("no data for live findings")
+        return 1
+    for lag, row in payload["headline"]["lags"].items():
+        if row:
+            print(f"day news vs daily return, lag {int(lag):+d}: r={row['r']:+.3f} n={row['n']}")
+    print(f"stored {payload['id']} ({payload['kind']})")
     return 0
 
 

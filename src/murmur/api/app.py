@@ -197,6 +197,7 @@ def create_app(
         correlations,
         datasets,
         days,
+        findings,
         index,
         jobs,
         leadlag,
@@ -221,6 +222,7 @@ def create_app(
         tickers,
         correlations,
         leadlag,
+        findings,
         sources,
         charts,
     ):

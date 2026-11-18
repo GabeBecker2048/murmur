@@ -157,6 +157,11 @@ def data_dictionary() -> str:
         "the Parquet footer metadata (`license`, `notice`, `attribution`, `contact`), and "
         "`/data` responses repeat it as `Link` and `X-Murmur-*` headers. A table with no "
         "rows for a period has no file.\n",
+        "Each footer also records `murmur_data_version`, the version of the published "
+        "data (see [stability.md](stability.md) and [data-changelog.md](data-changelog.md)), "
+        "`murmur_version` (the software that wrote it) and `murmur_period`. Frozen findings "
+        "snapshots are JSON files at `findings/<id>.json`, the newest also at "
+        "`findings/latest.json`.\n",
     ]
     for ds in datasets(config):
         license_name = ds.license.get("name", "")
