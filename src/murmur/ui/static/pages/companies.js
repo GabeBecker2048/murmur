@@ -1,7 +1,7 @@
 // Companies: the covered list for a month, and one company's sentiment, returns,
 // lead/lag and headlines.
 
-import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, link, navigate, daysAgo, badge } from "../app.js";
+import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, link, navigate, daysAgo, badge } from "../lib.js";
 import { leadlagChart, lineChart, chartNode } from "../charts.js";
 
 export async function render(main, parts, query) {
@@ -19,25 +19,25 @@ export async function render(main, parts, query) {
       table(
         [
           { label: "#", num: true, key: "rank" },
-          { label: "Ticker", value: (r) => link(`/tickers/${r.ticker}`, r.ticker, { class: "mono" }) },
+          { label: "Ticker", value: (r) => link(`/companies/${r.ticker}`, r.ticker, { class: "mono" }) },
           { label: "Company", key: "name" },
           { label: "Market cap", num: true, value: (r) => fmt.compact(r.market_cap) },
           { label: "Headlines this month", num: true, value: (r) => fmt.int(r.n_articles) },
           { label: "Priced days", num: true, value: (r) => fmt.int(r.n_prices) },
         ],
         items,
-        { compact: true, onRow: (r) => navigate(`/tickers/${r.ticker}`), empty: "No companies match." },
+        { compact: true, onRow: (r) => navigate(`/companies/${r.ticker}`), empty: "No companies match." },
       ),
     );
   };
   search.addEventListener("input", draw);
   draw();
   clear(main).append(
-    el("div", { class: "page-head" }, el("h1", { text: "Companies" }), el("p", { class: "lede", text: `The ${state.ui.coverage || ""} companies whose news is scored, with this month's coverage. Click one for its sentiment and returns.` })),
+    el("div", { class: "page-head" }, el("p", { class: "kicker", text: "Companies" }), el("h1", { text: "One company at a time" }), el("p", { class: "lede", text: `The ${state.ui.coverage || ""} companies whose headlines are scored, with this month's coverage. Pick one for its sentiment, returns, its own lead or lag and its latest headlines, or compare two.` })),
     el(
       "div",
       { class: "filters" },
-      field("Month", select((months.months || []).map((m) => [m, m]), month, (v) => navigate(`/tickers${qs({ month: v })}`))),
+      field("Month", select((months.months || []).map((m) => [m, m]), month, (v) => navigate(`/companies${qs({ month: v })}`))),
       field("Search", search),
     ),
     card("", wrap),
@@ -50,15 +50,20 @@ async function renderTicker(main, ticker, query) {
   try {
     info = await api(`tickers/${ticker}`);
   } catch (e) {
-    clear(main).append(card("Not found", el("p", {}, `${ticker} has never been in the index. `, link("/tickers", "All companies"))));
+    clear(main).append(card("Not found", el("p", {}, `${ticker} has never been in the index. `, link("/companies", "All companies"))));
     return;
   }
   const from = query.get("from") || daysAgo(120);
-  const [series, articles, leadlag] = await Promise.all([
+  const vs = (query.get("vs") || "").toUpperCase();
+  const [series, articles, leadlag, other, peers] = await Promise.all([
     api(`tickers/${ticker}/series${qs({ from })}`),
     api(`tickers/${ticker}/articles${qs({ limit: 40 })}`),
     api(`tickers/${ticker}/leadlag`).catch(() => ({ items: [] })),
+    vs && vs !== ticker ? api(`tickers/${vs}/series${qs({ from })}`).catch(() => null) : null,
+    api("tickers").catch(() => ({ items: [] })),
   ]);
+  const otherRows = other ? (other.items || []) : [];
+  const otherDays = otherRows.filter((r) => r.day_sentiment !== null && r.day_sentiment !== undefined);
   const latestMonth = (info.months || []).slice(-1)[0] || {};
   const rows = series.items || [];
 
@@ -100,14 +105,21 @@ async function renderTicker(main, ticker, query) {
   );
   const artCard = card("Latest headlines", (articles.items || []).length ? arts : el("div", { class: "empty", text: "No headlines yet." }), { sub: `${fmt.int(articles.total)} on record` });
 
-  const rangeSel = select([[daysAgo(30), "30 days"], [daysAgo(120), "120 days"], [daysAgo(365), "1 year"], ["2000-01-01", "All"]], from, (v) => navigate(`/tickers/${ticker}${qs({ from: v })}`));
-  clear(main).append(head, el("div", { class: "filters" }, field("Range", rangeSel), el("span", { class: "muted small" }, link("/tickers", "← all companies"))), el("div", { class: "hero" }, charts, artCard));
+  const rangeSel = select([[daysAgo(30), "30 days"], [daysAgo(120), "120 days"], [daysAgo(365), "1 year"], ["2000-01-01", "All"]], from, (v) => navigate(`/companies/${ticker}${qs({ from: v, vs: vs || undefined })}`));
+  const peerOptions = [["", "nobody"], ...(peers.items || []).filter((x) => x.ticker !== ticker).map((x) => [x.ticker, `${x.ticker} · ${x.name}`])];
+  const vsSel = select(peerOptions, vs, (v) => navigate(`/companies/${ticker}${qs({ from: query.get("from"), vs: v })}`), { "aria-label": "Compare with" });
+  const compareNote = vs && !otherRows.length ? el("span", { class: "muted small", text: `No data for ${vs} in this range.` }) : null;
+  clear(main).append(head, el("div", { class: "filters" }, field("Range", rangeSel), field("Compare with", vsSel), compareNote, el("span", { class: "muted small" }, link("/companies", "← all companies"))), el("div", { class: "hero" }, charts, artCard));
 
   if (dayRows.length >= 2) {
-    lineChart(sentNode, [{ name: "Day sentiment", x: dayRows.map((r) => r.date), y: dayRows.map((r) => r.day_sentiment) }], { yTitle: "mean score", yFormat: "+.2f", markers: true });
+    const series = [{ name: ticker, x: dayRows.map((r) => r.date), y: dayRows.map((r) => r.day_sentiment) }];
+    if (otherDays.length) series.push({ name: vs, x: otherDays.map((r) => r.date), y: otherDays.map((r) => r.day_sentiment) });
+    lineChart(sentNode, series, { yTitle: "mean score", yFormat: "+.2f", markers: true });
   }
   if (rows.length >= 2) {
-    lineChart(retNode, [{ name: "Daily return", x: rows.map((r) => r.date), y: rows.map((r) => r.daily) }], { percent: true, markers: rows.length < 40 });
+    const series = [{ name: ticker, x: rows.map((r) => r.date), y: rows.map((r) => r.daily) }];
+    if (otherRows.length) series.push({ name: vs, x: otherRows.map((r) => r.date), y: otherRows.map((r) => r.daily) });
+    lineChart(retNode, series, { percent: true, markers: rows.length < 40 });
     lineChart(priceNode, [{ name: "Close", x: rows.map((r) => r.date), y: rows.map((r) => r.close) }], { yFormat: ",.2f", zero: false });
   }
   if ((leadlag.items || []).length) {

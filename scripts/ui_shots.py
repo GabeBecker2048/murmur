@@ -20,13 +20,17 @@ BASE = os.environ.get("MURMUR_UI_BASE", "http://127.0.0.1:8100")
 OUT = Path.cwd() / "ui-shots"
 OUT.mkdir(exist_ok=True)
 PAGES = [
-    ("overview", "/"),
-    ("leadlag", "/leadlag"),
-    ("tickers", "/tickers"),
-    ("ticker-aapl", "/tickers/AAPL"),
-    ("sources", "/sources"),
+    ("findings", "/"),
+    ("news-vs-prices", "/news-vs-prices"),
+    ("companies", "/companies"),
+    ("company-aapl", "/companies/AAPL?vs=MSFT"),
     ("index", "/index"),
-    ("downloads", "/downloads"),
+    ("headlines", "/headlines?q=earnings"),
+    ("data", "/downloads"),
+    ("methodology", "/methodology"),
+    ("status", "/status"),
+    ("not-found", "/nope"),
+    ("embed", "/embed/findings"),
     ("admin-login", "/admin"),
 ]
 TOKEN = sys.argv[1] if len(sys.argv) > 1 else "t"

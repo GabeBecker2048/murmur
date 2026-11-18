@@ -1,16 +1,17 @@
-// Lead/lag explorer: horizon, method and source filters above everything; the chart,
-// the full window x return x lag table, the history of one cell, and one session's
-// cross-section.
+// News vs. prices (the explorer; /leadlag before 0.9.0): horizon, method and source
+// filters, the three matched pairs by lag, a heatmap of every window x return x lag
+// (click a cell for its history and one session's cross-section), all in the URL.
 
-import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, segmented, navigate, pairLabel, WINDOW_LABEL, RETURN_LABEL, LAG_LABEL, link } from "../app.js";
+import { api, qs, el, card, clear, table, fmt, state, setTitle, field, select, segmented, navigate, pairLabel, WINDOW_LABEL, RETURN_LABEL, link } from "../lib.js";
 import { leadlagChart, lineChart, scatterChart, chartNode } from "../charts.js";
+import { heatmap } from "./findings.js";
 
 const HORIZONS = [1, 3, 6, 12];
 const WINDOWS = ["overnight", "intraday", "day"];
 const RETURNS = ["overnight", "intraday", "daily"];
 
 export async function render(main, parts, query) {
-  setTitle("Lead or lag");
+  setTitle("News vs. prices");
   const ui = state.ui;
   const f = {
     months: Number(query.get("months") || ui.default_months || 3),
@@ -25,7 +26,7 @@ export async function render(main, parts, query) {
   const sources = await api("sources").catch(() => ({ items: [] }));
   const sourceNames = ["all", ...(sources.items || []).map((s) => s.source).filter((s) => s !== "all")];
 
-  const go = () => navigate(`/leadlag${qs(f)}`, { replace: true });
+  const go = () => navigate(`/news-vs-prices${qs(f)}`, { replace: true });
   const filters = el(
     "div",
     { class: "filters" },
@@ -43,40 +44,18 @@ export async function render(main, parts, query) {
   // ---- chart
   const llNode = chartNode("tall");
   const chartCard = card(
-    "The three matched pairs by lag",
+    "Matching windows and returns, by lag",
     rows.length ? el("div", {}, llNode, el("p", { class: "chart-note", text: `As of ${leadlag.as_of}. Each point pools every company and session in the window; bars are 95 % confidence intervals.` })) : el("div", { class: "empty", text: "No rolling results for this selection yet." }),
   );
 
-  // ---- full table
-  const byKey = Object.fromEntries(rows.map((r) => [`${r.window}|${r.return_type}|${r.lag}`, r]));
-  const tableRows = [];
-  for (const w of WINDOWS) for (const r of RETURNS) for (const lag of [-1, 0, 1]) {
-    const row = byKey[`${w}|${r}|${lag}`];
-    if (row) tableRows.push(row);
-  }
-  const cell = (r) => {
-    const sig = r.p_value !== null && r.p_value < 0.05;
-    return el("span", { class: sig ? (r.estimate > 0 ? "pos" : "neg") : "", style: sig ? "font-weight:600" : "" }, fmt.r(r.estimate));
-  };
-  const fullTable = table(
-    [
-      { label: "News window", value: (r) => WINDOW_LABEL[r.window] || r.window },
-      { label: "Return", value: (r) => RETURN_LABEL[r.return_type] || r.return_type },
-      { label: "Lag", value: (r) => `${r.lag > 0 ? "+" : ""}${r.lag} · ${LAG_LABEL[r.lag]}` },
-      { label: f.method === "spearman" ? "Spearman rho" : "Pearson r", num: true, value: cell },
-      { label: "95 % CI", num: true, value: (r) => (r.ci_low === null ? "–" : `${fmt.r2(r.ci_low)} … ${fmt.r2(r.ci_high)}`) },
-      { label: "p", num: true, value: (r) => fmt.p(r.p_value) },
-      { label: "n", num: true, value: (r) => fmt.int(r.n) },
-    ],
-    tableRows,
-    {
-      compact: true,
-      onRow: (r) => { f.window = r.window; f.return_type = r.return_type; f.lag = r.lag; go(); },
-      empty: "No rows for this selection.",
-    },
-  );
-  const tableCard = card("Every window, return and lag", el("div", {}, fullTable, el("p", { class: "chart-note", text: "Bold green or red: p < 0.05. Click a row to see its history below." })), {
-    sub: `${f.months}-month window, ${f.source === "all" ? "all sources" : f.source}`,
+  // ---- every window x return x lag, as a heatmap
+  const heat = heatmap(rows, (r) => { f.window = r.window; f.return_type = r.return_type; f.lag = r.lag; go(); }, {
+    selected: { window: f.window, return_type: f.return_type, lag: f.lag },
+    value: (r) => r.estimate,
+    significant: (r) => r.p_value !== null && r.p_value < 0.05,
+  });
+  const tableCard = card("Every news window, return and lag", el("div", {}, rows.length ? heat : el("div", { class: "empty", text: "No rows for this selection." }), el("p", { class: "chart-note", text: "Pick a cell to see how it has moved and one session up close below. \"Not significant\": p ≥ 0.05." })), {
+    sub: `${f.months}-month window, ${f.source === "all" ? "all sources" : f.source}, ${f.method === "spearman" ? "Spearman" : "Pearson"}`,
   });
 
   // ---- history of the selected cell
@@ -96,7 +75,7 @@ export async function render(main, parts, query) {
   const dayCard = card("One session up close", el("div", {}, el("div", { class: "filters" }, field("Session", dayInput), el("label", { class: "check" }, trendBox, "Show trendline")), dayWrap), { sub: "Per-company sentiment against that day's return" });
 
   clear(main).append(
-    el("div", { class: "page-head" }, el("h1", { text: "Lead or lag" }), el("p", { class: "lede", text: "Correlate each news window with each return at a one-session lead and lag. A positive lag +1 means today's news lines up with tomorrow's return." })),
+    el("div", { class: "page-head" }, el("p", { class: "kicker", text: "News vs. prices" }), el("h1", { text: "Does news move before prices, with them, or after?" }), el("p", { class: "lede" }, "Every company's headline sentiment against its stock's return, at a one-session lag either way, live and recomputed every trading day. Lag +1 pairs today's headlines with tomorrow's return (news predicts); −1 with yesterday's (news follows). The frozen conclusion is on the ", link("/", "Findings"), " page.")),
     filters,
     el("div", { class: "stack" }, chartCard, tableCard, histCard, dayCard),
   );
@@ -135,7 +114,7 @@ async function renderDay(wrap, day, f, trendBox) {
       { class: "chart-note" },
       corr ? `Same-session ${f.method}: ${fmt.r(corr.estimate)} (n ${corr.n}, p ${fmt.p(corr.p_value)}). ` : "",
       `${points.length} companies. Hover a point for the company. `,
-      link(`/tickers`, "Company pages →"),
+      link(`/companies`, "Company pages →"),
     ),
   );
   if (points.length < 3) return;
@@ -143,7 +122,7 @@ async function renderDay(wrap, day, f, trendBox) {
     scatterChart(node, points, { xTitle: `${WINDOW_LABEL[f.window]} sentiment (mean score)`, yTitle: RETURN_LABEL[f.return_type], percentY: true, trend: trendBox.checked });
   trendBox.onchange = () => {
     f.trend = trendBox.checked ? "" : "0";
-    history.replaceState(null, "", `/leadlag${qs(f)}`);
+    history.replaceState(null, "", `/news-vs-prices${qs(f)}`);
     draw();
   };
   draw();

@@ -213,19 +213,34 @@ Four pull requests, one release (decided 2026-11-07).
 - A generated `docs/` folder: configuration, API reference, data dictionary,
   checked in CI. The read-only container verified in CI.
 
-## 0.9.0 - the UI, properly
+## 0.9.0 - ready to show
 
-- A design pass over the dashboard: typography, spacing, colour, the chart
-  styling, an overview that reads as a report rather than a status page.
-- Explorer interactions: linked charts, shareable URLs for every view, a
-  company comparison view, source comparison charts.
-- The admin area: job timeline, settings diff and history, a backfill planner
-  that estimates duration.
+Three pull requests, one release (decided 2026-11-18).
+
+- Findings: the conclusion over a window as a frozen, dated snapshot (numbers and
+  reviewed prose together, never changed once published), with the checks it rests on:
+  market-adjusted returns, the day-by-day (Fama-MacBeth) estimate, the shuffle test,
+  splits by size and source. The first is `2026-10`, the first year. A live 12-month row
+  next to it.
+- Data versioning and a stability promise; bundles of any date range; monthly archives;
+  stable latest URLs; headline search; an Atom feed; a weekly restore check of the
+  offsite copy; citation and a dataset card.
+- The dashboard rebuilt around the answer: Findings as the home page, News vs. prices
+  (was Lead or lag) with a heatmap, Companies with comparison, Headlines, Data (the bundle
+  builder), Methodology, Status; the Sources page folded into filters; the
+  "murmuration" logo; embeddable Findings chart; link previews.
+- Offsite backup on AWS S3, configured by Gabe once 0.9.0 is out (the code shipped in
+  0.8.0).
+
+## 0.9.x
+
+- The admin area: job timeline, settings diff and history, a backfill planner that
+  estimates duration (moved from 0.9.0).
 
 ## 1.0.0 - public release
 
 - Only after the original contributors have agreed to publishing.
-- Personal-use sources replaced; data license added; dataset card written.
+- Personal-use sources replaced (the dataset card and licenses are written: 0.9.0).
 - Hugging Face mirror: the daily job pushes the day's files; the layout on
   HF matches `/data/`. A Zenodo DOI for the 1.0 snapshot.
 - README leads with the lead/lag chart and the current answer to the question.

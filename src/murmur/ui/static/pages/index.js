@@ -2,7 +2,7 @@
 // 500) and the latest session's biggest moves, constituents with rank and weight, this
 // month's changes.
 
-import { api, qs, el, card, tile, clear, table, fmt, state, setTitle, field, select, segmented, link, navigate } from "../app.js";
+import { api, qs, el, card, tile, clear, table, fmt, state, setTitle, field, select, segmented, link, navigate } from "../lib.js";
 import { barChart, lineChart, chartNode } from "../charts.js";
 
 export async function render(main, parts, query) {
@@ -28,26 +28,27 @@ export async function render(main, parts, query) {
   const head = el(
     "div",
     { class: "page-head" },
+    el("p", { class: "kicker", text: "The index" }),
     el("h1", { text: data.title || idx.title }),
     el("p", { class: "lede", text: `The ${data.size} largest US-domiciled companies on NYSE and Nasdaq by market cap, rebalanced on the first trading day of each month. Weight is each company's share of the total cap. ${data.covered < data.size ? `The top ${data.covered} are covered by the news pipeline.` : ""}` }),
   );
   const filters = el("div", { class: "filters" }, field("Month", select((months.months || []).map((m) => [m, m]), month, (v) => navigate(`/index${qs({ month: v })}`))), el("span", { class: "muted small" }, `in force from ${data.effective_date}`));
 
   const changeList = (rows, label) =>
-    el("div", {}, el("h3", { text: `${label} (${rows.length})` }), rows.length ? el("ul", { style: "margin:4px 0 0 18px; padding:0" }, rows.map((r) => el("li", {}, link(`/tickers/${r.ticker}`, r.ticker, { class: "mono" }), ` ${r.name}`, el("span", { class: "faint" }, ` · rank ${r.rank}`)))) : el("p", { class: "faint small", text: "none" }));
+    el("div", {}, el("h3", { text: `${label} (${rows.length})` }), rows.length ? el("ul", { style: "margin:4px 0 0 18px; padding:0" }, rows.map((r) => el("li", {}, link(`/companies/${r.ticker}`, r.ticker, { class: "mono" }), ` ${r.name}`, el("span", { class: "faint" }, ` · rank ${r.rank}`)))) : el("p", { class: "faint small", text: "none" }));
   const changesCard = card("Changes this month", el("div", { class: "grid cols-2" }, changeList(changes.added || [], "Added"), changeList(changes.removed || [], "Removed")), { sub: "versus the previous month on record" });
 
   const constituents = table(
     [
       { label: "#", num: true, key: "rank" },
-      { label: "Ticker", value: (r) => link(`/tickers/${r.ticker}`, r.ticker, { class: "mono" }) },
+      { label: "Ticker", value: (r) => link(`/companies/${r.ticker}`, r.ticker, { class: "mono" }) },
       { label: "Company", key: "name" },
       { label: "CIK", num: true, value: (r) => (r.cik ?? "–") },
       { label: "Market cap", num: true, value: (r) => fmt.compact(r.market_cap) },
       { label: "Weight", num: true, value: (r) => fmt.pct0(r.weight) },
     ],
     items,
-    { compact: true, onRow: (r) => navigate(`/tickers/${r.ticker}`) },
+    { compact: true, onRow: (r) => navigate(`/companies/${r.ticker}`) },
   );
 
   const downloads = el(
@@ -222,7 +223,7 @@ function levelSection(idx, level, latest, bench, node, query) {
   const moveTable = (rows) =>
     table(
       [
-        { label: "Ticker", value: (r) => link(`/tickers/${r.ticker}`, r.ticker, { class: "mono" }) },
+        { label: "Ticker", value: (r) => link(`/companies/${r.ticker}`, r.ticker, { class: "mono" }) },
         { label: "Weight", num: true, value: (r) => fmt.pct0(r.weight) },
         { label: "Return", num: true, value: (r) => fmt.pct(r.return) },
         { label: "Points", num: true, value: (r) => (r.points >= 0 ? "+" : "−") + Math.abs(r.points).toFixed(2) },

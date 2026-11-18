@@ -105,21 +105,26 @@ installed metadata (run `uv lock` after the bump; tests compare against pyprojec
   `uv run python scripts/gen_docs.py` (`tests/test_docs.py` fails otherwise). A new
   published column needs a line in `murmur.dictionary.COLUMNS`.
 - Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.
-- The web UI (0.7.0) is `src/murmur/ui/static/`: plain ES modules, no build step, Plotly
-  3.1.0 basic vendored under `vendor/` (MIT; version noted in `vendor/README.md`).
-  `api/ui.py` mounts `/static` and a catch-all that serves `index.html` for `UI_ROUTES`
-  (registered last in `create_app`). `app.js` = router (History API), `api()` client, token
-  in sessionStorage, `el()` DOM builder (textContent only; a test forbids innerHTML), theme
-  toggle (`data-theme` + localStorage, `murmur:theme` event re-themes live charts).
-  `charts.js` wraps Plotly with the CSS tokens (one y-axis per chart, legend for >= 2
-  series, 2px lines, >= 8px markers, category x-axis for <= 10 points). Pages under
-  `pages/` export `render(main, parts, query)` and may return `{destroy}` to stop timers.
-  The series colors are the validated reference palette (blue/orange/aqua for the three
-  matched pairs; status colors only for job states). Verify in a browser before shipping UI
-  changes: `scripts/ui_shots.py` (screenshots of every page, both themes, desktop + phone)
-  and `scripts/ui_review.py` (clicks through every control and admin flow; drives a visible
-  Brave/Chrome over CDP on port 9222 when one is running, else headless Chromium). Our
-  static files are served `no-cache` so a release never leaves stale modules in a browser.
+- The web UI (0.7.0, rebuilt in 0.9.0) is `src/murmur/ui/static/`: plain ES modules, no
+  build step, Plotly 3.1.0 basic vendored under `vendor/` (MIT; no heatmap trace, so the
+  heatmap is a table of buttons), Space Grotesk woff2 (OFL) in `vendor/fonts/` for headings
+  and the wordmark. `lib.js` = side-effect-free helpers (`api()`, `el()` textContent-only
+  DOM builder, `fmt`, `navigate` (dispatches `murmur:navigate`), `setTitle`, `codeBlock`,
+  theme); `app.js` = the shell only (router, `ALIASES` for old routes, 404 page, theme
+  toggle, boot). Pages under `pages/` import `../lib.js` (never `app.js`; a test checks)
+  and export `render(main, parts, query)`, optionally returning `{destroy}`. `charts.js`
+  wraps Plotly with the CSS tokens (`findingsChart` is shared with `embed.js`/`embed.html`,
+  the standalone `/embed/findings`). `api/ui.py`: `UI_ROUTES`, `ALIASES` (301, query kept),
+  `PAGES` (per-route title/description rendered into `index.html` with OG/Twitter tags;
+  unknown routes get the shell with status 404), `/embed/{name}`, the catch-all registered
+  last. The brand: `src/murmur/brand.py` (FLOCK 40 dots, SMALL 7 for favicons), outputs in
+  `static/brand/` via `scripts/make_brand.py --png` (Playwright; test checks SVGs match).
+  Verify in a browser before shipping UI changes: `scripts/ui_shots.py` (every page, both
+  themes, desktop + phone) and `scripts/ui_review.py` (clicks every control and admin flow;
+  needs a running worker for the job steps; CDP on 9222 when a visible browser listens,
+  else headless). Run them with `murmur serve --no-worker --no-scheduler` (plain
+  `create_app()` starts a worker and scheduler) against a scratch copy of the store. Our
+  static files are served `no-cache`; vendored files are immutable.
 
 ## Commands
 

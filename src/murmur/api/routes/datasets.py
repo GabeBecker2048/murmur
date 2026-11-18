@@ -29,7 +29,12 @@ def list_datasets(config: Config = Depends(get_config)):
     """Every dataset with its tables, license and coverage, without the file lists."""
     m = _manifest(config)
     items = [
-        {"name": name, **{k: v for k, v in ds.items() if k != "files"}}
+        {
+            "name": name,
+            **{k: v for k, v in ds.items() if k != "files"},
+            # the live setting, not the one recorded at the last export
+            "public": name not in config.datasets.private,
+        }
         for name, ds in m["datasets"].items()
     ]
     return {
@@ -68,6 +73,7 @@ def get_dataset(
     return {
         "name": name,
         **{k: v for k, v in ds.items() if k != "files"},
+        "public": name not in config.datasets.private,
         "files": files[offset : offset + limit],
         "total": len(files),
         "limit": limit,
