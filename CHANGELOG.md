@@ -4,7 +4,7 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
-## [0.9.0] - unreleased
+## [0.9.0] - 2026-11-18
 
 Ready to show: the answer stated and checked, the data versioned, a dashboard rebuilt
 around both. Three pull requests, one release.
