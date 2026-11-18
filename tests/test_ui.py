@@ -12,7 +12,9 @@ from tests.test_api import (
 )
 
 PAGE_FILES = {
-    "": "findings",
+    "": "overview",
+    "findings": "findings",
+    "story": "story",
     "news-vs-prices": "newsvsprices",
     "companies": "companies",
     "index": "index",
@@ -27,6 +29,8 @@ PAGE_FILES = {
 def test_shell_for_ui_routes_only(client):  # noqa: F811
     for path in (
         "/",
+        "/findings",
+        "/story",
         "/news-vs-prices",
         "/companies",
         "/companies/AAPL",
@@ -71,6 +75,8 @@ def test_each_page_has_its_title_and_preview_tags(client):  # noqa: F811
     )
     assert '<link rel="canonical" href="http://testserver/">' in home
     assert "<!--murmur:meta-->" not in home
+    assert "<title>Findings · Murmur</title>" in client.get("/findings").text
+    assert "<title>Story · Murmur</title>" in client.get("/story").text
     data = client.get("/downloads").text
     assert "<title>Data · Murmur</title>" in data and "CC BY 4.0" in data
     company = client.get("/companies/aapl").text

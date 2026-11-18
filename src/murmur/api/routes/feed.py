@@ -139,7 +139,7 @@ def feed(
         _sub(e, "title", f"Findings: {text.get('title') or r['id']}")
         _sub(e, "id", f"{base}/feed/findings/{r['id']}")
         _sub(e, "updated", updated)
-        _sub(e, "link", href=f"{base}/?findings={r['id']}", rel="alternate")
+        _sub(e, "link", href=f"{base}/findings?findings={r['id']}", rel="alternate")
         _sub(e, "summary", text.get("headline") or "")
         entries.append((updated, e))
 

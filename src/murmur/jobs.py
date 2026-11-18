@@ -239,6 +239,7 @@ def _findings(store: Store, config: Config, params: dict) -> dict:
         date.fromisoformat(params["from"]),
         date.fromisoformat(params["to"]),
         freeze=bool(params.get("freeze")),
+        source=params.get("source", "all"),
     )
     lag0 = payload["headline"]["lags"].get("0") or {}
     return {"id": payload["id"], "kind": payload["kind"], "r": lag0.get("r"), "n": lag0.get("n")}
@@ -421,6 +422,11 @@ def validate(type_: str, params: dict, confirm: bool) -> tuple[dict, str | None]
             clean["to"] = _iso(params.get("to"), "to")
             if clean["to"] < clean["from"]:
                 raise JobError("to must not be before from")
+            if params.get("source") and params["source"] != "all":
+                src = str(params["source"])
+                if not src.isidentifier():
+                    raise JobError("source must be a news source name, e.g. finnhub")
+                clean["source"] = src
             if params.get("freeze"):
                 if not confirm:
                     raise JobError("freeze publishes the snapshot for good; send confirm=true")

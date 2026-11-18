@@ -78,7 +78,7 @@ export async function render(main) {
     ),
 
     H("versions", "Versions and stability"),
-    P(`The published data has its own version (now ${manifest.data_version || "–"}), stamped in every file. Within a major version no published column, table or key is removed or renamed and the stable URLs keep working; additions get a new minor version; breaking changes are announced 90 days ahead. Frozen findings never change: a new conclusion is a new snapshot. Details: `, A("https://github.com/GabeBecker2048/murmur/blob/main/docs/stability.md", "stability"), " and ", A("https://github.com/GabeBecker2048/murmur/blob/main/docs/data-changelog.md", "data changelog"), "."),
+    P(`The published dataset is v${manifest.data_version || "1.0.0"}, stamped in every file. Its shape never changes: new days are added, but no column, table or key is added, removed or renamed. If that ever has to happen, the whole dataset is republished as a new version that replaces it, announced ahead of time. Corrections to published values are listed in the data changelog. The stable addresses (the manifest, the latest-file URLs, the bundle API) keep working, and frozen findings never change: a new conclusion is a new snapshot. Details: `, A("https://github.com/GabeBecker2048/murmur/blob/main/docs/stability.md", "stability"), " and ", A("https://github.com/GabeBecker2048/murmur/blob/main/docs/data-changelog.md", "data changelog"), "."),
 
     H("licenses", "Licenses"),
     UL(

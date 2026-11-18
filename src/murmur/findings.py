@@ -170,16 +170,22 @@ def compute(
     end: date,
     *,
     permutations: int = PERMUTATIONS,
+    source: str = SOURCE,
 ) -> dict:
-    """Every figure of a findings snapshot over sentiment sessions ``[start, end]``."""
+    """Every figure of a findings snapshot over sentiment sessions ``[start, end]``.
+    ``source`` restricts the headlines to one news source (``'all'`` = pooled); the
+    ``by_source`` split always shows every source for comparison."""
     import numpy as np
 
     if end < start:
         raise FindingsError("end is before start")
     by_source, rets = _frames(store, config, start, end)
-    ws = by_source.get(SOURCE)
+    ws = by_source.get(source)
     if ws is None or ws.empty:
-        raise FindingsError(f"no scored headlines with returns between {start} and {end}")
+        raise FindingsError(
+            f"no scored {'' if source == SOURCE else source + ' '}headlines with returns "
+            f"between {start} and {end}"
+        )
 
     pairs, adjusted, per_session = [], [], []
     for window in WINDOWS_ALL:
@@ -225,13 +231,13 @@ def compute(
         )
 
     split_source = []
-    for source, frame in by_source.items():
-        if source == SOURCE:
+    for other, frame in by_source.items():
+        if other == SOURCE:
             continue
         for lag in LAGS:
             m = _pairs(frame, rets, window, lag, return_type)
             row = _r(m["mean_score"], m[return_type]) if len(m) else None
-            split_source.append({"source": source, "lag": lag, "n": len(m), **(row or {})})
+            split_source.append({"source": other, "lag": lag, "n": len(m), **(row or {})})
 
     split_cap = []
     for lo, hi in CAP_GROUPS:
@@ -250,7 +256,9 @@ def compute(
                 }
             )
 
-    cov = store.findings_coverage(start.isoformat(), end.isoformat(), config.sentiment.model)
+    cov = store.findings_coverage(
+        start.isoformat(), end.isoformat(), config.sentiment.model, source
+    )
     head = {
         str(lag): next(
             (p for p in pairs if (p["window"], p["return_type"], p["lag"]) == (*HEADLINE, lag)),
@@ -273,13 +281,16 @@ def compute(
         "by_cap": split_cap,
         "coverage": {
             **cov,
-            "sources": sorted(s for s in by_source if s != SOURCE),
+            "sources": [source]
+            if source != SOURCE
+            else sorted(s for s in by_source if s != SOURCE),
             "pairs_day_daily_lag0": head["0"]["n"] if head["0"] else 0,
         },
         "meta": {
             "murmur_version": __version__,
             "data_version": DATA_VERSION,
             "model": config.sentiment.model,
+            "source": source,
             "computed_at": utc_now_iso(),
             "permutations": permutations,
             "min_session_pairs": MIN_SESSION_PAIRS,
@@ -317,6 +328,7 @@ def create(
     *,
     freeze: bool = False,
     permutations: int = PERMUTATIONS,
+    source: str = SOURCE,
 ) -> dict:
     """Compute and store a draft (or frozen) snapshot. A frozen id is never replaced."""
     if not snapshot_id or snapshot_id == LIVE_ID or not _valid_id(snapshot_id):
@@ -324,7 +336,7 @@ def create(
     existing = store.findings_get(snapshot_id)
     if existing is not None and existing["kind"] == "frozen":
         raise FindingsError(f"findings {snapshot_id} are frozen and cannot be replaced")
-    payload = compute(store, config, start, end, permutations=permutations)
+    payload = compute(store, config, start, end, permutations=permutations, source=source)
     text = text_for(snapshot_id)
     if freeze and text is None:
         raise FindingsError(f"no reviewed text: findings_text/{snapshot_id}.toml")
@@ -366,3 +378,13 @@ def refresh_live(store: Store, config: Config, as_of: date) -> dict | None:
 
 def _valid_id(value: str) -> bool:
     return len(value) <= 40 and all(c.isalnum() or c in "-_" for c in value)
+
+
+def delete_draft(store: Store, snapshot_id: str) -> None:
+    """Remove a draft. Frozen snapshots and the live row are never deleted here."""
+    row = store.findings_get(snapshot_id)
+    if row is None:
+        raise FindingsError(f"no findings {snapshot_id!r}")
+    if row["kind"] != "draft":
+        raise FindingsError(f"findings {snapshot_id} are {row['kind']}; only drafts can be deleted")
+    store.delete_findings(snapshot_id)

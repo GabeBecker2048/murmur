@@ -20,7 +20,9 @@ BASE = os.environ.get("MURMUR_UI_BASE", "http://127.0.0.1:8100")
 OUT = Path.cwd() / "ui-shots"
 OUT.mkdir(exist_ok=True)
 PAGES = [
-    ("findings", "/"),
+    ("overview", "/"),
+    ("findings", "/findings"),
+    ("story", "/story"),
     ("news-vs-prices", "/news-vs-prices"),
     ("companies", "/companies"),
     ("company-aapl", "/companies/AAPL?vs=MSFT"),

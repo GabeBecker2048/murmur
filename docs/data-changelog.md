@@ -1,17 +1,16 @@
 # Data changelog
 
-Every version of the published data (the `murmur_data_version` footer key and the
-manifest's `data_version`). How versions are numbered and what stays stable:
-[stability.md](stability.md). Software releases are in `CHANGELOG.md`.
+The versions of Murmur's published data (the `murmur_data_version` footer key and the
+manifest's `data_version`), and any correction made to published values. What stays
+stable: [stability.md](stability.md). Software releases are in `CHANGELOG.md`.
 
-## 1.0.0 - 2026-11 (Murmur 0.9.0)
+## 1.0.0
 
-The first versioned release of the published tree; everything published before it is
-the same data without the version stamp.
+The dataset as published on day one of the public release.
 
 - Datasets: `companies`, `m100` (the Murmur 100: constituents, changes, level,
   contributions), `prices`, `news`, `sentiment`, `correlations` (daily, rolling,
-  placebo, monthly rolling_tickers). Columns are listed in
+  placebo, monthly rolling_tickers). Every column is in
   [data-dictionary.md](data-dictionary.md).
-- New: `findings/<id>.json`, frozen findings snapshots, and `findings/latest.json`.
-- New footer key `murmur_data_version`; new manifest keys `data_version` and `findings`.
+- Frozen findings snapshots at `findings/<id>.json`, the newest at `findings/latest.json`.
+- Monthly archives at `archives/murmur-YYYYMM.tar.gz`.

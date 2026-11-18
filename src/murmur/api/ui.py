@@ -16,6 +16,7 @@ from starlette.staticfiles import StaticFiles
 
 UI_ROUTES = (
     "",
+    "findings",
     "news-vs-prices",
     "companies",
     "index",
@@ -23,6 +24,7 @@ UI_ROUTES = (
     "downloads",
     "methodology",
     "status",
+    "story",
     "admin",
 )
 """First path segments the app handles client-side (``/companies/AAPL`` included)."""
@@ -36,7 +38,17 @@ SITE_DESCRIPTION = (
     "sentiment of the 100 largest US companies against their returns, as open data."
 )
 PAGES: dict[str, tuple[str, str]] = {
-    "": ("Findings", SITE_DESCRIPTION),
+    "": ("Overview", SITE_DESCRIPTION),
+    "findings": (
+        "Findings",
+        "What a year of headlines and returns shows: news moves with stock prices on the same "
+        "day and trails them a little, but does not predict the next day. With the checks.",
+    ),
+    "story": (
+        "Story",
+        "How three friends' side project became Murmur: the prototype, who built what, and "
+        "the rebuild into a daily pipeline.",
+    ),
     "news-vs-prices": (
         "News vs. prices",
         "Every company's headline sentiment against its stock's return, a session before, "
@@ -103,7 +115,7 @@ def render_shell(template: str, request: Request, path: str) -> str:
     Twitter tags. Every value is escaped; nothing from the request reaches the page except
     its own URL."""
     title, description = page_meta(path)
-    full_title = "Murmur" if title == "Findings" else f"{title} · Murmur"
+    full_title = "Murmur" if title == "Overview" else f"{title} · Murmur"
     base = str(request.base_url).rstrip("/")
     url = base + "/" + path.lstrip("/")
     image = f"{base}/static/brand/social-card.png"

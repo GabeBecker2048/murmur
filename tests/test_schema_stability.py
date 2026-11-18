@@ -1,10 +1,11 @@
 """The schema-stability promise (docs/stability.md), enforced.
 
 ``tests/fixtures/published_schema.json`` records every published dataset, table, column
-and key as of ``DATA_VERSION``. Within a major data version nothing may be removed or
-renamed; anything added needs a new minor version. Changing the published schema:
+and key of the dataset version ``DATA_VERSION`` (v1.0.0). The schema of a version never
+changes: any addition, removal or rename means a whole new dataset version that replaces
+the old one. To publish one:
 
-1. bump ``murmur.publish.DATA_VERSION`` (minor for an addition, major for a removal),
+1. bump ``murmur.publish.DATA_VERSION`` to the next major (2.0.0),
 2. add the version to ``docs/data-changelog.md``,
 3. ``uv run python tests/test_schema_stability.py --write`` (refuses without step 1).
 """
@@ -74,8 +75,9 @@ def test_the_schema_matches_its_recorded_data_version():
 
     recorded = json.loads(FIXTURE.read_text())
     assert recorded["datasets"] == current_schema(), (
-        "the published schema changed: bump DATA_VERSION, note it in docs/data-changelog.md, "
-        "then run `uv run python tests/test_schema_stability.py --write`"
+        "the published schema changed: that is a new dataset version (bump DATA_VERSION to "
+        "the next major, note it in docs/data-changelog.md, then run "
+        "`uv run python tests/test_schema_stability.py --write`)"
     )
     assert recorded["data_version"] == DATA_VERSION, (
         "DATA_VERSION changed: run `uv run python tests/test_schema_stability.py --write`"

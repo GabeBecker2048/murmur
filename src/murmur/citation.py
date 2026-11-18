@@ -1,8 +1,7 @@
 """How to cite Murmur: one source for ``CITATION.cff`` (written by scripts/gen_docs.py),
 ``GET /api/v1/citation`` and the dashboard's Cite button.
 
-Authors are the project's three contributors by their GitHub names; add ``given-names``
-and ``family-names`` to ``AUTHORS`` when they agree to be listed by name.
+Authors are the project's three contributors (as listed in the README).
 """
 
 from __future__ import annotations
@@ -10,9 +9,9 @@ from __future__ import annotations
 REPOSITORY = "https://github.com/GabeBecker2048/murmur"
 TITLE = "Murmur: news-headline sentiment and stock returns for the largest US companies"
 AUTHORS: tuple[dict[str, str], ...] = (
-    {"alias": "GabeBecker2048"},
-    {"alias": "wyatthbc"},
-    {"alias": "samchapoton"},
+    {"given-names": "Gabe", "family-names": "Becker", "alias": "GabeBecker2048"},
+    {"given-names": "Wyatt", "family-names": "Burch-Celentano", "alias": "wyatthbc"},
+    {"given-names": "Sam", "family-names": "Chapoton", "alias": "samchapoton"},
 )
 ABSTRACT = (
     "A daily dataset and pipeline: FinBERT sentiment of news headlines for the 100 largest "
@@ -31,6 +30,15 @@ def _names() -> list[str]:
         else:
             out.append(a.get("name") or a["alias"])
     return out
+
+
+def _apa_names() -> str:
+    """APA style: "Becker, G., Burch-Celentano, W., & Chapoton, S."."""
+    names = [
+        f"{a['family-names']}, {a['given-names'][0]}." if a.get("family-names") else a["alias"]
+        for a in AUTHORS
+    ]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + ", & " + names[-1]
 
 
 def _year(day: str | None) -> str:
@@ -63,7 +71,14 @@ def cff(version: str, data_version: str, released: str | None = None) -> str:
         "  - type: data",
         f'    title: "Murmur data (data version {data_version})"',
         "    authors:",
-        *[f'      - alias: "{a["alias"]}"' for a in AUTHORS],
+        *[
+            line
+            for a in AUTHORS
+            for line in (
+                f'      - family-names: "{a["family-names"]}"',
+                f'        given-names: "{a["given-names"]}"',
+            )
+        ],
         '    license: "CC-BY-4.0"',
         f'    url: "{REPOSITORY}"',
         f'    version: "{data_version}"',
@@ -102,7 +117,7 @@ def bibtex(version: str, data_version: str, findings: dict | None = None, url: s
 
 
 def apa(version: str, data_version: str, findings: dict | None = None, url: str = "") -> str:
-    authors = ", ".join(_names())
+    authors = _apa_names()
     if findings:
         title = (findings.get("text") or {}).get("title") or findings["id"]
         end = findings["window"]["end"]
