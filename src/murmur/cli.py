@@ -79,6 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
     sch.add_argument("--once", action="store_true", help="one tick, then exit")
     off = add("offsite", "the backup service: upload new store snapshots to S3", dated=False)
     off.add_argument("--once", action="store_true", help="one pass, then exit")
+    off.add_argument(
+        "--verify",
+        action="store_true",
+        help="restore drill: download the newest copy, check it, exit 0/1",
+    )
     add("schedule", "(legacy) the pre-0.6.0 scheduler loop, no HTTP, no jobs", dated=False)
     r = add("runs", "list recent runs", dated=False)
     r.add_argument("--limit", type=int, default=20)
@@ -152,7 +157,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         from murmur.config import ConfigProvider
         from murmur.offsite import offsite_main
 
-        return offsite_main(ConfigProvider(args.config), once=args.once)
+        return offsite_main(
+            ConfigProvider(args.config), once=args.once or args.verify, verify_only=args.verify
+        )
     if args.command == "schedule":
         from murmur.scheduler import serve
 

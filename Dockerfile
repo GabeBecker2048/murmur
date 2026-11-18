@@ -22,10 +22,14 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
+# ARROW_DEFAULT_MEMORY_POOL: Arrow's default pool (mimalloc) keeps freed memory; a
+# year-long bundle peaked at 400 MB RSS with it, 234 MB with the system allocator
+# (measured 2026-11-18), and the API container has 512 MB.
 ENV PATH="/app/.venv/bin:$PATH" \
     MURMUR_DATA_DIR=/data \
     HF_HOME=/data/hf-cache \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    ARROW_DEFAULT_MEMORY_POOL=system
 
 RUN useradd --uid 1000 --create-home murmur && mkdir /data && chown murmur:murmur /data
 USER murmur

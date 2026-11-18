@@ -4,6 +4,24 @@
 
 Base path `/api/v1`. Reads are open; POST, PUT and DELETE need `Authorization: Bearer $MURMUR_API_TOKEN`. Errors are `{"detail": ...}`; lists take `limit`/`offset` and return `total`. The interactive version is `/docs` on a running instance; published files are under `/data` (see the data dictionary).
 
+## articles
+
+### `GET /api/v1/articles`
+
+Headlines, newest first, with their FinBERT scores. ``q`` matches words in the title (case-insensitive, at least 2 characters); ``sentiment`` = positive, negative or neutral (FinBERT's label).
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `q` | query | string or null |  |
+| `ticker` | query | string or null |  |
+| `from` | query | string or null |  |
+| `to` | query | string or null |  |
+| `window` | query | string or null |  |
+| `source` | query | string or null |  |
+| `sentiment` | query | string or null |  |
+| `limit` | query | integer | 50 |
+| `offset` | query | integer | 0 |
+
 ## charts
 
 ### `GET /api/v1/charts/leadlag.png`
@@ -52,6 +70,21 @@ The daily cross-sectional correlations as a series, filterable on every key.
 | `lag` | query | integer or null |  |
 | `source` | query | string or null |  |
 | `method` | query | string or null |  |
+
+## data
+
+### `GET /api/v1/bundle`
+
+Any date range of the published datasets as one ``.tar.gz``: one file per table (rows of the range, gathered from the day and month files), ``README.txt`` with every license notice, ``index.json`` and ``SHA256SUMS``. ``datasets`` and ``tables`` are comma-separated (empty = all public ones; a table may be ``dataset/table``). ``format=csv`` is limited to 93 days for ``news``. ``dry_run=true`` answers with the plan and an estimated size instead. One bundle is built at a time (429).
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `from` | query | string |  |
+| `to` | query | string |  |
+| `datasets` | query | string or null |  |
+| `tables` | query | string or null |  |
+| `format` | query | string | "parquet" |
+| `dry_run` | query | boolean | false |
 
 ## datasets
 
@@ -104,6 +137,12 @@ Day Articles
 | `limit` | query | integer | 50 |
 | `offset` | query | integer | 0 |
 
+## feed
+
+### `GET /feed.xml`
+
+Atom: a weekly summary of the sessions analysed, and each new findings snapshot.
+
 ## findings
 
 ### `GET /api/v1/charts/findings.png`
@@ -114,6 +153,14 @@ The Findings chart as a PNG, for embedding where an iframe is not allowed.
 |---|---|---|---|
 | `id` | query | string | "latest" |
 | `theme` | query | string | "light" |
+
+### `GET /api/v1/citation`
+
+How to cite Murmur, or one findings snapshot (``findings=<id>`` or ``latest``): BibTeX, APA and the CITATION.cff text.
+
+| Parameter | In | Type | Default |
+|---|---|---|---|
+| `findings` | query | string or null |  |
 
 ### `GET /api/v1/findings`
 

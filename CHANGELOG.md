@@ -35,6 +35,30 @@ around both. Three pull requests, one release.
   `docs/data-changelog.md`, the promise in `docs/stability.md`, and
   `tests/test_schema_stability.py`, which fails when a published table, column or key
   disappears within a major version or the schema changes without a new version.
+- **Bundles**: `GET /api/v1/bundle?from=&to=&datasets=&tables=&format=` streams any date
+  range as one `.tar.gz`: one file per table with the range's rows (gathered from day
+  and month files), `README.txt` with every license notice, `index.json` and
+  `SHA256SUMS`. Staged under `<data_dir>/tmp`, one build at a time (429), private
+  datasets only with the token, CSV of `news` up to 93 days, `dry_run=true` for the plan
+  and an estimated size.
+- **Monthly archives**: `archives/murmur-YYYYMM.tar.gz` for every finished month,
+  (re)written after the daily export, a full export or a month rebuild when the month's
+  files changed; listed in the manifest under `archives`.
+- **Stable latest URLs**: `/data/{dataset}/latest.{table}.parquet` (and `?format=csv`)
+  serve the newest session (or month) of a table, with `Content-Location` naming the
+  dated file.
+- **Headline search**: `GET /api/v1/articles?q=&ticker=&from=&to=&source=&window=&sentiment=`
+  (every word of `q` in the title).
+- **Atom feed** at `/feed.xml`: one entry per week (the week's mean same-session r,
+  headlines, the index's move) and one per frozen findings snapshot.
+- **Restore drill**: the backup service downloads the newest offsite copy once a week,
+  checks its SHA-256, runs SQLite's integrity check and opens it; `murmur offsite
+  --verify` runs it now. The health report flags a failed check and warns after 8 days
+  without one.
+- `CITATION.cff` (generated from `src/murmur/citation.py` by `scripts/gen_docs.py`),
+  `GET /api/v1/citation?findings=` (BibTeX, APA, CFF), `docs/dataset-card.md` (a
+  datasheet with a Hugging Face header for the 1.0 mirror) and `docs/quickstart.md`
+  (pandas, DuckDB, latest URLs, bundles).
 
 ## [0.8.2] - 2026-11-08
 

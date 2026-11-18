@@ -23,7 +23,7 @@ import os
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -60,6 +60,10 @@ class Target(Protocol):
 
     def size(self, key: str) -> int | None: ...
 
+    def download(self, key: str, dest: Path) -> dict[str, str]:
+        """Fetch ``key`` to ``dest``; return the object's metadata."""
+        ...
+
 
 class S3Target:
     """boto3, imported here only (the other services never load it)."""
@@ -79,6 +83,11 @@ class S3Target:
             key,
             ExtraArgs={"Metadata": metadata, "ContentType": "application/gzip"},
         )
+
+    def download(self, key: str, dest: Path) -> dict[str, str]:
+        self.client.download_file(self.bucket, key, str(dest))
+        head = self.client.head_object(Bucket=self.bucket, Key=key)
+        return {k.lower(): v for k, v in head.get("Metadata", {}).items()}
 
     def size(self, key: str) -> int | None:
         from botocore.exceptions import ClientError
@@ -195,14 +204,84 @@ def upload_pending(config: Config, target: Target, settings: S3Settings | None =
     return status
 
 
+VERIFY_EVERY_DAYS = 7
+VERIFY_STALE_DAYS = 8
+"""The health report warns when a configured offsite copy has not been restored and
+checked for this long."""
+
+
+def verify_latest(config: Config, target: Target) -> dict:
+    """The restore drill: download the newest uploaded snapshot, check its SHA-256
+    against the one recorded at upload, gunzip it, run SQLite's integrity check and open
+    it read-only. The result is recorded in the status file; the copy is deleted."""
+    import sqlite3
+
+    status = read_status(config)
+    key = status.get("last_key")
+    status["last_verify"] = utc_now_iso()
+    staging = config.offsite_dir / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    gz, raw = staging / "verify.sqlite.gz", staging / "verify.sqlite"
+    try:
+        if not key:
+            raise RuntimeError("nothing has been uploaded yet")
+        meta = target.download(key, gz)
+        digest = hashlib.sha256()
+        with gzip.open(gz, "rb") as fin, raw.open("wb") as fout:
+            while chunk := fin.read(1 << 20):
+                digest.update(chunk)
+                fout.write(chunk)
+        expected = meta.get("sha256")
+        if expected and digest.hexdigest() != expected:
+            raise RuntimeError(f"sha256 mismatch: {digest.hexdigest()} != {expected}")
+        con = sqlite3.connect(f"file:{raw}?mode=ro", uri=True)
+        try:
+            check = con.execute("PRAGMA integrity_check").fetchone()[0]
+            if check != "ok":
+                raise RuntimeError(f"integrity_check: {check}")
+            schema = con.execute("PRAGMA user_version").fetchone()[0]
+            articles = con.execute("SELECT count(*) FROM articles").fetchone()[0]
+        finally:
+            con.close()
+        status.update(
+            last_verify_ok=True,
+            last_verify_error=None,
+            last_verify_key=key,
+            last_verify_schema=schema,
+            last_verify_articles=articles,
+            last_verify_success=status["last_verify"],
+        )
+        log.info("offsite: verified %s (schema %s, %d articles)", key, schema, articles)
+    except Exception as e:  # noqa: BLE001 - recorded and reported by the health report
+        status.update(last_verify_ok=False, last_verify_error=f"{type(e).__name__}: {e}")
+        log.exception("offsite: verify of %s failed", key)
+    finally:
+        gz.unlink(missing_ok=True)
+        raw.unlink(missing_ok=True)
+    _write_status(config, status)
+    return status
+
+
+def verify_due(status: dict, now: datetime | None = None) -> bool:
+    if not status.get("last_key"):
+        return False
+    when = status.get("last_verify")
+    if not when:
+        return True
+    then = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return (now or datetime.now(UTC)) - then >= timedelta(days=VERIFY_EVERY_DAYS)
+
+
 def offsite_main(
     provider: ConfigProvider,
     once: bool = False,
     poll_seconds: float = POLL_SECONDS,
     target: Target | None = None,
     env: Mapping[str, str] | None = None,
+    verify_only: bool = False,
 ) -> int:
-    """The ``murmur offsite`` process (the murmur-backup service)."""
+    """The ``murmur offsite`` process (the murmur-backup service). It also runs the
+    restore drill (``verify_latest``) once a week; ``verify_only`` runs it once now."""
     import signal
 
     stop = threading.Event()
@@ -226,7 +305,14 @@ def offsite_main(
 
         write_heartbeat(heartbeat_path(config))
         if target is not None:
-            upload_pending(config, target, settings)
+            if verify_only:
+                return 0 if verify_latest(config, target).get("last_verify_ok") else 1
+            status = upload_pending(config, target, settings)
+            if verify_due(status):
+                verify_latest(config, target)
+        elif verify_only:
+            log.error("offsite: --verify needs %s", ENV_BUCKET)
+            return 1
         if once:
             break
         stop.wait(poll_seconds)

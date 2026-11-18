@@ -182,10 +182,19 @@ def data_dictionary() -> str:
     return "\n".join(lines)
 
 
+def citation_cff() -> str:
+    from murmur import __version__
+    from murmur.citation import cff
+    from murmur.publish import DATA_VERSION
+
+    return cff(__version__, DATA_VERSION)
+
+
 PAGES = {
     "configuration.md": configuration,
     "api.md": api,
     "data-dictionary.md": data_dictionary,
+    "../CITATION.cff": citation_cff,
 }
 
 
@@ -194,7 +203,7 @@ def main(argv: list[str]) -> int:
     stale = []
     for name, build in PAGES.items():
         text = build().rstrip() + "\n"
-        path = DOCS / name
+        path = (DOCS / name).resolve()
         if check:
             if not path.exists() or path.read_text() != text:
                 stale.append(name)

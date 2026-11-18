@@ -29,6 +29,10 @@ class FakeTarget:
             return None
         return len(self.objects[key]) + (1 if self.wrong_size else 0)
 
+    def download(self, key, dest):
+        dest.write_bytes(self.objects[key])
+        return self.metadata[key]
+
 
 @pytest.fixture
 def cfg(tmp_path):
@@ -133,3 +137,69 @@ def test_backup_prefix_is_validated(tmp_path):
     )
     with pytest.raises(ConfigError, match="backup.prefix"):
         load_config(user, env={})
+
+
+def real_store_snapshot(cfg, name="murmur_2026-11-07_043000.sqlite"):
+    import sqlite3
+
+    cfg.backups_dir.mkdir(parents=True, exist_ok=True)
+    path = cfg.backups_dir / name
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT);"
+        "INSERT INTO articles (title) VALUES ('a'), ('b');"
+        "PRAGMA user_version = 13;"
+    )
+    con.commit()
+    con.close()
+    return path
+
+
+def test_restore_drill_checks_the_uploaded_copy(cfg):
+    real_store_snapshot(cfg)
+    target = FakeTarget()
+    offsite.upload_pending(cfg, target)
+    assert offsite.verify_due(offsite.read_status(cfg))
+    status = offsite.verify_latest(cfg, target)
+    assert status["last_verify_ok"] is True and status["last_verify_error"] is None
+    assert status["last_verify_schema"] == 13 and status["last_verify_articles"] == 2
+    assert not offsite.verify_due(status)
+    assert not list((cfg.offsite_dir / "staging").iterdir())
+
+
+def test_restore_drill_catches_a_bad_copy(cfg):
+    real_store_snapshot(cfg)
+    target = FakeTarget()
+    offsite.upload_pending(cfg, target)
+    key = offsite.read_status(cfg)["last_key"]
+    target.metadata[key] = {**target.metadata[key], "sha256": "0" * 64}
+    status = offsite.verify_latest(cfg, target)
+    assert status["last_verify_ok"] is False and "sha256 mismatch" in status["last_verify_error"]
+    target.objects[key] = gzip.compress(b"not a database at all" * 100)
+    target.metadata[key] = {}
+    status = offsite.verify_latest(cfg, target)
+    assert status["last_verify_ok"] is False
+
+
+def test_restore_drill_with_nothing_uploaded(cfg):
+    status = offsite.verify_latest(cfg, FakeTarget())
+    assert (
+        status["last_verify_ok"] is False
+        and "nothing has been uploaded" in status["last_verify_error"]
+    )
+    assert not offsite.verify_due(status)
+
+
+def test_the_service_runs_the_drill_weekly_and_on_demand(cfg, tmp_path):
+    real_store_snapshot(cfg)
+    provider = ConfigProvider(cfg.source_path, env={})
+    target = FakeTarget()
+    assert offsite.offsite_main(provider, once=True, target=target) == 0
+    assert offsite.read_status(cfg)["last_verify_ok"] is True  # first upload -> verified
+    assert offsite.offsite_main(provider, once=True, target=target, verify_only=True) == 0
+    broken = FakeTarget()
+    broken.objects, broken.metadata = (
+        dict(target.objects),
+        {k: {"sha256": "0" * 64} for k in target.objects},
+    )
+    assert offsite.offsite_main(provider, once=True, target=broken, verify_only=True) == 1
