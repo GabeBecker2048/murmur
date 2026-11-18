@@ -227,7 +227,7 @@ from the package, Plotly.js vendored, no build step, talking only to
 | Methodology | how every number is made, the checks, limitations, the dataset version, licenses, contact and takedown |
 | Story | how the project started, who built what, the prototype and the rebuild |
 | Status | services, the last two weeks of runs, the last 30 sessions' coverage |
-| Admin (footer link) | sign in with the API token: jobs, backfill form, scheduler, every setting as a form, the process log |
+| Admin (`/admin`, not linked) | sign in with the API token: jobs, backfill form, scheduler, every setting as a form, the process log |
 
 Old addresses (`/leadlag`, `/tickers`, `/sources`, `/?findings=`) lead to their new pages.
 `/embed/findings?id=&theme=` is the Findings chart alone, for an iframe; each page's

@@ -37,6 +37,8 @@ one full year.
   what it found, how to get the data or run it, where the docs are.
 - The citation lists the three authors by name.
 - ROADMAP.md now lists only what is still planned.
+- The footer no longer links to the admin area; it stays at `/admin` for whoever has the
+  token.
 
 ## [0.9.0] - 2026-11-18
 
