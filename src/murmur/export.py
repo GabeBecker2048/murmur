@@ -34,6 +34,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from murmur import __version__
+from murmur.bundle import archives_manifest
 from murmur.clock import DAY, first_trading_day, month_key, today_in, utc_now_iso
 from murmur.config import Config
 from murmur.publish import (
@@ -768,7 +769,43 @@ def rebuild_month(store: Store, config: Config, month: str) -> list[Path]:
     written += export_month(store, config, month)
     written += compact_finished_months(base, config, month_key(today))
     written.append(write_index(base, config))
+    written += update_archives(config, today)
     return sorted(p for p in set(written) if p.exists())
+
+
+# -- archives -------------------------------------------------------------------
+
+
+def update_archives(config: Config, today: date | None = None) -> list[Path]:
+    """(Re)write ``archives/murmur-YYYYMM.tar.gz`` for every finished month that has no
+    archive yet or whose files changed after it was written, then refresh the manifest.
+    Called after a day's export, a full export and a month rebuild (not per day)."""
+    from murmur import bundle
+
+    base = config.published_dir
+    current = month_key(today or today_in(config.timezone))
+    m = manifest(base, config)
+    newest: dict[str, str] = {}
+    for spec in m["datasets"].values():
+        if not spec["public"]:
+            continue
+        for f in spec["files"]:
+            month = f["date"][:7]
+            if month < current and f["format"] == "parquet":
+                newest[month] = max(newest.get(month, ""), f["modified"])
+    written = []
+    for month, modified in sorted(newest.items()):
+        path = base / bundle.ARCHIVES / f"murmur-{month.replace('-', '')}.tar.gz"
+        if path.exists():
+            stamp = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+            if stamp.strftime("%Y-%m-%dT%H:%M:%SZ") >= modified:
+                continue
+        out = bundle.month_archive(config, month, m)
+        if out is not None:
+            written.append(out)
+    if written:
+        written.append(write_index(base, config))
+    return written
 
 
 # -- findings -------------------------------------------------------------------
@@ -904,6 +941,14 @@ def manifest(base: Path, config: Config) -> dict:
             "csv": "append ?format=csv to any .parquet URL",
         },
         "datasets": out,
+        "archives": {
+            "description": (
+                "One .tar.gz per finished month with every public dataset's tables for that "
+                "month, a README with the licenses and SHA256SUMS. Any other range: "
+                "GET /api/v1/bundle?from=&to="
+            ),
+            "files": archives_manifest(base),
+        },
         "findings": {
             "description": (
                 "Frozen findings snapshots: the conclusion over a window, numbers and prose, "

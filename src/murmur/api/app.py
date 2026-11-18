@@ -68,9 +68,48 @@ class PublishedFiles(StaticFiles):
                     headers={"Cache-Control": "no-store"},
                 )
         query = parse_qs(scope.get("query_string", b"").decode())
-        if path.endswith(".parquet") and query.get("format", [""])[0] == "csv":
+        csv = query.get("format", [""])[0] == "csv"
+        parts = path.split("/")
+        if (
+            len(parts) == 2
+            and parts[1].startswith("latest.")
+            and parts[1].endswith(".parquet")
+            and self.provider is not None
+        ):
+            return self._latest_response(parts[0], parts[1][len("latest.") : -len(".parquet")], csv)
+        if path.endswith(".parquet") and csv:
             return self._csv_response(path)
         return await super().get_response(path, scope)
+
+    def _latest_response(self, dataset: str, table: str, csv: bool) -> Response:
+        """``/data/{dataset}/latest.{table}.parquet``: the newest session (or month) of a
+        table, whatever file holds it; ``Content-Location`` names the dated file."""
+        import pyarrow.csv as pcsv
+        import pyarrow.parquet as pq
+
+        from murmur import bundle
+
+        found = bundle.latest(self.provider.get(), dataset, table)
+        if found is None:
+            return JSONResponse({"detail": f"no {dataset}/{table} published"}, status_code=404)
+        data, dated = found
+        buf = BytesIO()
+        if csv:
+            pcsv.write_csv(data.replace_schema_metadata(None), buf)
+            media, ext = "text/csv", "csv"
+        else:
+            pq.write_table(data, buf)
+            media, ext = "application/vnd.apache.parquet", "parquet"
+        return Response(
+            buf.getvalue(),
+            media_type=media,
+            headers={
+                "Content-Location": f"/data/{dated}",
+                "Content-Disposition": f'attachment; filename="{dataset}.latest.{table}.{ext}"',
+                "Cache-Control": "public, max-age=300",
+                **self._license_headers(dated),
+            },
+        )
 
     def _license_headers(self, path: str) -> dict[str, str]:
         if self.provider is None:
@@ -192,11 +231,14 @@ def create_app(
         )
 
     from murmur.api.routes import (
+        articles,
+        bundle,
         charts,
         companies,
         correlations,
         datasets,
         days,
+        feed,
         findings,
         index,
         jobs,
@@ -223,10 +265,13 @@ def create_app(
         correlations,
         leadlag,
         findings,
+        articles,
+        bundle,
         sources,
         charts,
     ):
         app.include_router(module.router, prefix=API_PREFIX)
+    app.include_router(feed.router)  # /feed.xml, outside the API prefix
 
     published = provider.get().published_dir
     app.mount(

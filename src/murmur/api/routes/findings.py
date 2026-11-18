@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from murmur.api import charts
 from murmur.api.deps import get_store
@@ -49,3 +49,20 @@ def findings_png(store: Store = Depends(get_store), id: str = LATEST, theme: str
         raise HTTPException(422, "theme must be light or dark")
     png = charts.findings(_payload(store, id), theme)
     return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@router.get("/citation")
+def citation(request: Request, store: Store = Depends(get_store), findings: str | None = None):
+    """How to cite Murmur, or one findings snapshot (``findings=<id>`` or ``latest``):
+    BibTeX, APA and the CITATION.cff text."""
+    from murmur import __version__
+    from murmur import citation as cite
+    from murmur.publish import DATA_VERSION
+
+    doc = _payload(store, findings) if findings else None
+    url = str(request.base_url).rstrip("/") + "/" if doc else ""
+    return {
+        "bibtex": cite.bibtex(__version__, DATA_VERSION, doc, url),
+        "apa": cite.apa(__version__, DATA_VERSION, doc, url),
+        "cff": cite.cff(__version__, DATA_VERSION),
+    }

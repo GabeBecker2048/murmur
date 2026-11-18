@@ -457,10 +457,12 @@ def export_range(store: Store, config: Config, start: date, end: date) -> list[P
 
 
 def run_export(store: Store, config: Config, day: date, also: list[date] = ()) -> list[Path]:
+    from murmur.export import update_archives
+
     written = []
     for d in [*also, day]:
         written += export_day(store, config, d)
-    return written
+    return written + update_archives(config)
 
 
 def export_all(store: Store, config: Config) -> list[Path]:
@@ -470,7 +472,10 @@ def export_all(store: Store, config: Config) -> list[Path]:
     for i, iso in enumerate(days):
         jobctl.report("export", i, len(days), iso)
         written += export_day(store, config, date.fromisoformat(iso))
-    return written
+    from murmur.export import update_archives
+
+    jobctl.report("export", message="monthly archives")
+    return written + update_archives(config)
 
 
 # -- orchestration ------------------------------------------------------------

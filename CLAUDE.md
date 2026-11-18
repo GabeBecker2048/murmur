@@ -91,7 +91,17 @@ installed metadata (run `uv lock` after the bump; tests compare against pyprojec
   table, column or key: bump it, add a `docs/data-changelog.md` section, then
   `uv run python tests/test_schema_stability.py --write` (refuses without the bump).
   `docs/stability.md` and `docs/data-changelog.md` are hand-written.
-- `docs/*.md` are generated: after changing settings, routes, datasets or columns run
+- Data access (0.9.0): `src/murmur/bundle.py` (core: `plan`, `stream` = tar `w|gz` into a
+  generator, members staged in `SpooledTemporaryFile` under `<data_dir>/tmp`; `latest`;
+  `month_archive`), `routes/bundle.py` (one build at a time via a module lock -> 429),
+  `export.update_archives` (after `run_export`, `export_all`, `rebuild_month`; never per
+  `export_day`), `PublishedFiles._latest_response` for `/data/{ds}/latest.{table}.parquet`,
+  `routes/articles.py` (title search, `Store.articles_query(q=, label=)`), `routes/feed.py`
+  (`/feed.xml`, mounted without the API prefix, before `mount_ui`), `src/murmur/citation.py`
+  (-> `CITATION.cff` via gen_docs, `/api/v1/citation`), `offsite.verify_latest` (weekly in
+  the service, `murmur offsite --verify`).
+- `docs/configuration.md`, `api.md`, `data-dictionary.md` and `CITATION.cff` are generated:
+  after changing settings, routes, datasets or columns run
   `uv run python scripts/gen_docs.py` (`tests/test_docs.py` fails otherwise). A new
   published column needs a line in `murmur.dictionary.COLUMNS`.
 - Never add a second writer thread: SQLite is single-writer and FinBERT is one CPU job.

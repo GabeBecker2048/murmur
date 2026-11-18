@@ -149,6 +149,20 @@ def health_report(store: Store, config: Config, worker: Worker | None, now=None)
             else f"last offsite backup was {offsite_age:.0f} h ago"
             + (f" ({offsite['last_error']})" if offsite.get("last_error") else "")
         )
+    if offsite.get("configured") and offsite.get("last_key"):
+        from murmur.offsite import VERIFY_STALE_DAYS
+
+        if offsite.get("last_verify_ok") is False:
+            problems.append(f"offsite restore check failed ({offsite.get('last_verify_error')})")
+        else:
+            ok_at = offsite.get("last_verify_success")
+            age = last_success_age_hours({"last_success": ok_at}, now.astimezone(UTC))
+            if age is None or age > VERIFY_STALE_DAYS * 24:
+                warnings.append(
+                    "the offsite copy has never been restore-checked"
+                    if age is None
+                    else f"last offsite restore check was {age / 24:.0f} days ago"
+                )
 
     usage = shutil.disk_usage(config.data_dir) if config.data_dir.exists() else None
     if usage and usage.free < DISK_MIN_FREE:
@@ -173,6 +187,9 @@ def health_report(store: Store, config: Config, worker: Worker | None, now=None)
                 "last_success_age_hours": None if offsite_age is None else round(offsite_age, 1),
                 "last_key": offsite.get("last_key"),
                 "last_error": offsite.get("last_error"),
+                "last_verify": offsite.get("last_verify"),
+                "last_verify_ok": offsite.get("last_verify_ok"),
+                "last_verify_error": offsite.get("last_verify_error"),
             },
         },
         "disk": {

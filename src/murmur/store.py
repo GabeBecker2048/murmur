@@ -1734,10 +1734,21 @@ class Store:
         window: str | None = None,
         source: str | None = None,
         model: str | None = None,
+        q: str | None = None,
+        label: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[sqlite3.Row], int]:
         where, params = [], []
+        if q:
+            # every word must appear in the title; LIKE wildcards in the words are literal
+            for word in q.split()[:8]:
+                escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                where.append("a.title LIKE ? ESCAPE '\\'")
+                params.append(f"%{escaped}%")
+        if label:
+            where.append("a.id IN (SELECT article_id FROM sentiment WHERE model = ? AND label = ?)")
+            params += [model, label]
         if ticker:
             where.append("a.id IN (SELECT article_id FROM article_tickers WHERE ticker = ?)")
             params.append(ticker)

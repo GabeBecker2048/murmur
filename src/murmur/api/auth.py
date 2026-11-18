@@ -21,3 +21,14 @@ def require_token(
         raise HTTPException(401, "bearer token required", headers={"WWW-Authenticate": "Bearer"})
     if not hmac.compare_digest(creds.credentials.encode(), token.encode()):
         raise HTTPException(401, "invalid token", headers={"WWW-Authenticate": "Bearer"})
+
+
+def has_token(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> bool:
+    """True when the request carries the valid API token (reads that unlock private data)."""
+    token = request.app.state.provider.get().api.token
+    if not token or creds is None or creds.scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(creds.credentials.encode(), token.encode())
