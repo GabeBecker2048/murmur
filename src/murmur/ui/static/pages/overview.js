@@ -123,7 +123,7 @@ export async function render(main, parts, query) {
       el("p", { class: "pitch", text: g.pitch }),
       el("ul", {}, g.rows.map((r) => el("li", { text: r }))),
       el("p", { class: "for", text: g.for }),
-      el("p", { class: "delivery small" }, el("strong", { text: "Delivered: " }), DELIVERY[g.name === indexName ? "m100" : g.name] || ""),
+      el("p", { class: "delivery small" }, el("strong", { text: "Delivered: " }), DELIVERY[g.name === idx.name ? "m100" : g.name] || ""),
       el(
         "p",
         { class: "faint small" },
