@@ -1,7 +1,7 @@
 # Quick start: reading Murmur's data
 
 Everything below uses the public endpoints of a Murmur server; replace `$MURMUR` with
-its address (for example `https://murmur.gabe.beer`). What each column means:
+its address (for example `https://murmur.gabebecker.com`). What each column means:
 [data-dictionary.md](data-dictionary.md).
 
 ## The answer, in one request
@@ -22,7 +22,7 @@ in (`Content-Location` names the dated file):
 ```python
 import pandas as pd
 
-base = "https://murmur.gabe.beer/data"
+base = "https://murmur.gabebecker.com/data"
 articles = pd.read_parquet(f"{base}/news/latest.articles.parquet")
 sentiment = pd.read_parquet(f"{base}/sentiment/latest.sentiment.parquet")
 index = pd.read_parquet(f"{base}/m100/latest.constituents.parquet")
@@ -53,7 +53,7 @@ INSTALL httpfs; LOAD httpfs;
 
 -- same-session correlation of each day, from the daily correlation files of October
 SELECT date, estimate AS r, n
-FROM read_parquet('https://murmur.gabe.beer/data/correlations/2026/10/202610.daily.parquet')
+FROM read_parquet('https://murmur.gabebecker.com/data/correlations/2026/10/202610.daily.parquet')
 WHERE "window" = 'day' AND return_type = 'daily' AND lag = 0
   AND source = 'all' AND method = 'pearson'
 ORDER BY date;
@@ -64,7 +64,7 @@ The manifest lists every file, so a script can find what to read:
 ```python
 import requests
 
-manifest = requests.get("https://murmur.gabe.beer/data/index.json").json()
+manifest = requests.get("https://murmur.gabebecker.com/data/index.json").json()
 files = [f["path"] for f in manifest["datasets"]["sentiment"]["files"]]
 ```
 

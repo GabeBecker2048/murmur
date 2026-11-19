@@ -63,7 +63,7 @@ services:
     <<: *murmur
     container_name: murmur
     command: ["murmur", "serve", "--no-worker"]
-    # The API (and /docs) on the LAN; murmur.gabe.beer routes here through Caddy.
+    # The API (and /docs) on the LAN; murmur.gabebecker.com routes here through Caddy.
     ports:
       - "8100:8100"
     healthcheck:
