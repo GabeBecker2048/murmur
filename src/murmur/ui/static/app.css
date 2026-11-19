@@ -422,3 +422,4 @@ blockquote.answer footer { color: var(--text-2); font-size: .85rem; }
 .timeline .when { font: 600 .78rem/1.4 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
 .timeline h3 { margin: 2px 0 6px; font-size: 1.15rem; }
 .timeline p { margin: 0 0 .5rem; max-width: 66ch; color: var(--text-1); line-height: 1.6; }
+.dataset-card .delivery { color: var(--text-2); margin: 6px 0 4px; }

@@ -6,7 +6,6 @@ import { api, qs, el, card, clear, fmt, setTitle, link, badge, segmented, codeBl
 import { findingsChart, chartNode } from "../charts.js";
 
 const LAGS = [-1, 0, 1];
-const MIN_SPLIT_SHARE = 0.05; // a source with under 5 % of the company-days is "too few"
 const WINDOWS = ["overnight", "intraday", "day"];
 const RETURNS = ["overnight", "intraday", "daily"];
 
@@ -149,16 +148,11 @@ export async function render(main, parts, query) {
 
   // ---- splits
   const capRows = (doc.by_cap || []).filter((x) => x.lag === 0);
-  const lag0All = head["0"] && head["0"].n;
-  const srcRows = (doc.by_source || []).filter((x) => x.lag === 0);
   const splits = el(
     "div",
     { class: "stack" },
     capRows.length
       ? el("div", {}, el("h3", { text: "By company size" }), el("div", { class: "grid cols-2" }, capRows.map((x) => el("div", { class: "tile" }, el("div", { class: "label", text: `Ranks ${x.ranks}` }), el("div", { class: "value", text: x.r === undefined ? "–" : fmt.r(x.r) }), el("div", { class: "faint small", text: `same session · n = ${fmt.int(x.n)}` })))))
-      : null,
-    srcRows.length
-      ? el("div", {}, el("h3", { text: "By news source" }), el("div", { class: "grid cols-2" }, srcRows.map((x) => el("div", { class: "tile" }, el("div", { class: "label", text: x.source }), el("div", { class: "value", text: x.r === undefined || x.n < MIN_SPLIT_SHARE * (lag0All || 0) ? "too few" : fmt.r(x.r) }), el("div", { class: "faint small", text: x.r !== undefined && x.n < MIN_SPLIT_SHARE * (lag0All || 0) ? `only ${fmt.int(x.n)} company-days in this window` : `same session · n = ${fmt.int(x.n)}` })))))
       : null,
   );
 
