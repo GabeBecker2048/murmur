@@ -61,21 +61,21 @@ every number is in `/data/findings/first-year.json`.
 
 ## Get the data
 
-Everything is under `/data` on a Murmur server (`https://murmur.gabe.beer` below).
+Everything is under `/data` on a Murmur server (`https://murmur.gabebecker.com` below).
 
 ```sh
 # the newest day of headlines, scored
-curl -O https://murmur.gabe.beer/data/news/latest.articles.parquet
+curl -O https://murmur.gabebecker.com/data/news/latest.articles.parquet
 
 # any date range of any datasets, as one .tar.gz with licenses and checksums
-curl -o murmur.tar.gz "https://murmur.gabe.beer/api/v1/bundle?from=2026-01-01&to=2026-06-30&datasets=sentiment,prices"
+curl -o murmur.tar.gz "https://murmur.gabebecker.com/api/v1/bundle?from=2026-01-01&to=2026-06-30&datasets=sentiment,prices"
 ```
 
 ```python
 import pandas as pd
 
-index = pd.read_parquet("https://murmur.gabe.beer/data/m100/latest.constituents.parquet")
-sentiment = pd.read_parquet("https://murmur.gabe.beer/data/sentiment/latest.sentiment.parquet")
+index = pd.read_parquet("https://murmur.gabebecker.com/data/m100/latest.constituents.parquet")
+sentiment = pd.read_parquet("https://murmur.gabebecker.com/data/sentiment/latest.sentiment.parquet")
 ```
 
 Every finished month is also a ready-made archive, and `/data/index.json` lists every

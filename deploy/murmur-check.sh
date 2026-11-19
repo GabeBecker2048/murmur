@@ -11,7 +11,7 @@
 set -euo pipefail
 
 URL="${MURMUR_REPORT_URL:-http://127.0.0.1:8100/api/v1/health/report}"
-CLICK="${MURMUR_CLICK_URL:-https://murmur.gabe.beer/admin}"
+CLICK="${MURMUR_CLICK_URL:-https://murmur.gabebecker.com/status}"
 NTFY="${NTFY_SEND:-/usr/local/bin/ntfy-send}"
 
 notify() {  # priority title message
