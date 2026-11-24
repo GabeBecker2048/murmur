@@ -27,3 +27,6 @@ ui-review/
 # credentials downloaded from cloud consoles
 *accessKeys*.csv
 *credentials*.csv
+
+# Claude Code project notes (kept locally)
+CLAUDE.md
