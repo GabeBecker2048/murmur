@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Murmur: a daily pipeline that scores news-headline sentiment (FinBERT) for the largest US
 companies, stores it with daily prices in SQLite, and correlates sentiment with returns.
-`ROADMAP.md` lists only what is still planned (1.0, 1.x); `CHANGELOG.md` records what
+`ROADMAP.md` lists only what is still planned (1.x); `CHANGELOG.md` records what
 shipped. The settled design decisions that used to open ROADMAP.md (universe, timing,
 store, layout, sources, licensing) are in its git history before 0.9.1; the ones still
 binding are restated in this file. The published dataset is **v1.0.0** and its schema

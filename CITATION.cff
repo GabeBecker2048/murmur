@@ -13,7 +13,7 @@ authors:
   - family-names: "Chapoton"
     given-names: "Sam"
     alias: "samchapoton"
-version: "0.9.2"
+version: "1.0.0"
 repository-code: "https://github.com/GabeBecker2048/murmur"
 license: MIT
 abstract: "A daily dataset and pipeline: FinBERT sentiment of news headlines for the 100 largest US-listed companies, their daily returns, and the correlation between the two at a one-session lead and lag, with a cap-weighted index (the Murmur 100) and frozen findings snapshots."
