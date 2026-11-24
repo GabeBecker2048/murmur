@@ -146,6 +146,9 @@ def real_store_snapshot(cfg, name="murmur_2026-11-07_043000.sqlite"):
     path = cfg.backups_dir / name
     con = sqlite3.connect(path)
     con.executescript(
+        # WAL like the real snapshots: opening the copy creates -wal/-shm files that
+        # the drill must clean up.
+        "PRAGMA journal_mode = wal;"
         "CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT);"
         "INSERT INTO articles (title) VALUES ('a'), ('b');"
         "PRAGMA user_version = 13;"

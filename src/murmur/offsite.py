@@ -221,7 +221,10 @@ def verify_latest(config: Config, target: Target) -> dict:
     status["last_verify"] = utc_now_iso()
     staging = config.offsite_dir / "staging"
     staging.mkdir(parents=True, exist_ok=True)
-    gz, raw = staging / "verify.sqlite.gz", staging / "verify.sqlite"
+    # Per-process names: a manual `murmur offsite --verify` may run while the service
+    # does its own (2026-11-24: two drills sharing one file broke each other).
+    tag = f"verify-{os.getpid()}"
+    gz, raw = staging / f"{tag}.sqlite.gz", staging / f"{tag}.sqlite"
     try:
         if not key:
             raise RuntimeError("nothing has been uploaded yet")
@@ -256,8 +259,13 @@ def verify_latest(config: Config, target: Target) -> dict:
         status.update(last_verify_ok=False, last_verify_error=f"{type(e).__name__}: {e}")
         log.exception("offsite: verify of %s failed", key)
     finally:
-        gz.unlink(missing_ok=True)
-        raw.unlink(missing_ok=True)
+        for leftover in (
+            gz,
+            raw,
+            raw.with_name(raw.name + "-wal"),
+            raw.with_name(raw.name + "-shm"),
+        ):
+            leftover.unlink(missing_ok=True)
     _write_status(config, status)
     return status
 
