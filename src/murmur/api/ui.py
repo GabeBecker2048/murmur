@@ -67,7 +67,7 @@ PAGES: dict[str, tuple[str, str]] = {
     "downloads": (
         "Data",
         "Murmur's open data: any date range as one download, monthly archives, stable "
-        "latest URLs and every file. CC BY 4.0.",
+        "latest URLs and every file.",
     ),
     "methodology": (
         "Methodology",

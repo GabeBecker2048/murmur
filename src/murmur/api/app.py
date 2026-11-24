@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 
 from murmur import __version__
+from murmur.api.ratelimit import RateLimiter
 from murmur.config import ConfigProvider
 from murmur.jobs import Worker
 from murmur.store import Store
@@ -220,6 +221,7 @@ def create_app(
     ring = _RingLog(LOG_LINES)
     logging.getLogger().addHandler(ring)
     app.state.ring_log = ring
+    app.state.rate_limiter = RateLimiter()
 
     origins = provider.get().api.cors_origins
     if origins:

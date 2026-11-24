@@ -119,7 +119,7 @@ export async function render(main, parts, query) {
     return el(
       "article",
       { class: "dataset-card" },
-      el("div", { class: "card-head" }, el("h3", { text: g.title }), lic ? badge(/^source terms/i.test(lic) ? "source terms" : lic, /^source terms/i.test(lic) ? "warning" : "good") : null),
+      el("div", { class: "card-head" }, el("h3", { text: g.title }), lic ? badge(/^source terms/i.test(lic) ? "source terms" : lic, /^source terms/i.test(lic) ? "" : "good") : null),
       el("p", { class: "pitch", text: g.pitch }),
       el("ul", {}, g.rows.map((r) => el("li", { text: r }))),
       el("p", { class: "for", text: g.for }),
@@ -142,7 +142,7 @@ export async function render(main, parts, query) {
     el(
       "p",
       { class: "lede" },
-      "You do not have to care about our question to use the data. Six datasets, updated every trading day, free to use under CC BY 4.0 (prices: the source's terms). Download any date range in one file, a whole month at a time, or always the newest day from a fixed address. Dataset v1.0.0. ",
+      "You do not have to care about our question to use the data. Six datasets, updated every trading day, all free (CC BY 4.0; headlines, sentiment and prices: source terms apply). Download any date range in one file, a whole month at a time, or always the newest day from a fixed address. Dataset v1.0.0. ",
       el("a", { href: "https://github.com/GabeBecker2048/murmur/blob/main/docs/quickstart.md" }, "Quick start for pandas and DuckDB"),
       ".",
     ),

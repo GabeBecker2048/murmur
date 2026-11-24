@@ -8,7 +8,7 @@ Base path `/api/v1`. Reads are open; POST, PUT and DELETE need `Authorization: B
 
 ### `GET /api/v1/articles`
 
-Headlines, newest first, with their FinBERT scores. ``q`` matches words in the title (case-insensitive, at least 2 characters); ``sentiment`` = positive, negative or neutral (FinBERT's label).
+Headlines, newest first, with their FinBERT scores. ``q`` matches words in the title (case-insensitive, at least 2 characters); ``sentiment`` = positive, negative or neutral (FinBERT's label). Each client may search ``api.searches_per_minute`` times a minute (429 with Retry-After).
 
 | Parameter | In | Type | Default |
 |---|---|---|---|
@@ -75,7 +75,7 @@ The daily cross-sectional correlations as a series, filterable on every key.
 
 ### `GET /api/v1/bundle`
 
-Any date range of the published datasets as one ``.tar.gz``: one file per table (rows of the range, gathered from the day and month files), ``README.txt`` with every license notice, ``index.json`` and ``SHA256SUMS``. ``datasets`` and ``tables`` are comma-separated (empty = all public ones; a table may be ``dataset/table``). ``format=csv`` is limited to 93 days for ``news``. ``dry_run=true`` answers with the plan and an estimated size instead. One bundle is built at a time (429).
+Any date range of the published datasets as one ``.tar.gz``: one file per table (rows of the range, gathered from the day and month files), ``README.txt`` with every license notice, ``index.json`` and ``SHA256SUMS``. ``datasets`` and ``tables`` are comma-separated (empty = all public ones; a table may be ``dataset/table``). ``format=csv`` is limited to 93 days for ``news``. ``dry_run=true`` answers with the plan and an estimated size instead. One bundle is built at a time, and each client may build ``api.bundles_per_hour`` (429 with Retry-After; dry runs and the API token are exempt).
 
 | Parameter | In | Type | Default |
 |---|---|---|---|

@@ -83,7 +83,7 @@ def test_a_bundle_spans_month_files_and_day_files(tree):
         digest, name = line.split("  ")
         assert hashlib.sha256(files[f"{root}/{name}"]).hexdigest() == digest
     readme = files[f"{root}/README.txt"].decode()
-    assert "CC BY 4.0" in readme and "Source terms apply" in readme
+    assert "Source terms apply" in readme and "Takedown available by request" in readme
     meta = pq.read_metadata(io.BytesIO(files[f"{root}/news/articles.parquet"])).metadata
     assert meta[b"murmur_data_version"] and meta[b"murmur_period"] == b"2026-10-30..2026-11-05"
     index = json.loads(files[f"{root}/index.json"])
@@ -181,7 +181,7 @@ def test_bundle_and_latest_over_http(tree):
         assert (
             latest.headers["content-location"] == "/data/news/2026/11/05/20261105.articles.parquet"
         )
-        assert latest.headers["x-murmur-license"] == "CC BY 4.0"
+        assert latest.headers["x-murmur-license"] == "Source terms apply"
         assert set(_rows(latest.content, "trading_day")) == {"2026-11-05"}
         csv = c.get("/data/prices/latest.prices.parquet?format=csv")
         assert csv.headers["content-type"].startswith("text/csv") and "2026-11-05" in csv.text
@@ -242,3 +242,37 @@ def test_citation_cff_in_the_repo_is_generated():
 def test_unused_store_is_fine():
     with Store(":memory:") as s:
         assert s.findings_list() == []
+
+
+def test_rate_limits_per_client(tree, tmp_path):
+    user = tmp_path / "limits.toml"
+    user.write_text(
+        tree.source_path.read_text() + "\n[api]\nbundles_per_hour = 1\nsearches_per_minute = 2\n"
+    )
+    own = ConfigProvider(user, env={"MURMUR_API_TOKEN": TOKEN})
+    with TestClient(create_app(own, run_worker=False)) as c:
+        url = "/api/v1/bundle?from=2026-11-05&to=2026-11-05&datasets=prices"
+        assert c.get(url).status_code == 200
+        assert c.get(url + "&dry_run=true").status_code == 200  # dry runs are free
+        over = c.get(url)
+        assert over.status_code == 429 and int(over.headers["retry-after"]) > 0
+        assert "1 per hour" in over.json()["detail"]
+        auth = {"Authorization": f"Bearer {TOKEN}"}
+        assert c.get(url, headers=auth).status_code == 200  # the token is exempt
+
+        assert c.get("/api/v1/articles?q=apple").status_code == 200
+        assert c.get("/api/v1/articles").status_code == 200
+        assert c.get("/api/v1/articles?q=apple").status_code == 429
+        assert c.get("/api/v1/articles?q=apple", headers=auth).status_code == 200
+
+
+def test_rate_limiter_window():
+    from murmur.api.ratelimit import RateLimiter
+
+    now = [0.0]
+    rl = RateLimiter(clock=lambda: now[0])
+    assert rl.hit(("x", "a"), 2, 60) == 0 and rl.hit(("x", "a"), 2, 60) == 0
+    assert rl.hit(("x", "a"), 2, 60) == 60
+    assert rl.hit(("x", "b"), 2, 60) == 0  # per client
+    now[0] = 61
+    assert rl.hit(("x", "a"), 2, 60) == 0  # the window slid

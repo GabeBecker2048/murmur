@@ -4,6 +4,24 @@ All notable changes to Murmur. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/). Planned versions are in `ROADMAP.md`.
 
+## [Unreleased]
+
+### Added
+
+- Per-client rate limits on range bundles (`api.bundles_per_hour`, 10) and headline
+  search (`api.searches_per_minute`, 60): 429 with `Retry-After`; the API token is
+  exempt. `api.trusted_proxies` lets the limits see visitors behind a reverse proxy.
+- The contact address in the dashboard's footer and on the Methodology page.
+
+### Changed
+
+- Licenses: `news`, `sentiment` and `prices` carry a short "source terms apply"
+  notice (takedown available by request) instead of CC BY 4.0; `companies`, the index,
+  `correlations` and the findings stay CC BY 4.0. Notices only: the schema and the
+  dataset version (v1.0.0) are unchanged.
+- The Docker image builds its dependency layer from version-blanked lock files, so a
+  release no longer ships a new 530 MB layer when the dependencies did not change.
+
 ## [0.9.2] - 2026-11-18
 
 ### Added

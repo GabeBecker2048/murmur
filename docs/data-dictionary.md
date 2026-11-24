@@ -104,7 +104,7 @@ Key: `date`, `ticker`.
 
 Daily bars (open, high, low, close, adjusted close, volume) and the three returns computed from them: overnight (open over the previous close), intraday (close over open) and daily (close over the previous close). prev_close is split-adjusted when split_ratio is set.
 
-License: **Source terms apply (not openly licensed)**. Dataset cadence: daily.
+License: **Source terms apply**. Dataset cadence: daily.
 
 ### `prices` (daily)
 
@@ -133,7 +133,7 @@ Key: `ticker`, `date`.
 
 One row per headline and company: title, URL, publisher, which source(s) reported it, when it was published, the trading day and window it was assigned to, and the sentiment scores where the headline has been scored.
 
-License: **CC BY 4.0**. Dataset cadence: daily.
+License: **Source terms apply**. Dataset cadence: daily.
 
 ### `articles` (daily)
 
@@ -165,7 +165,7 @@ Key: `article_id`, `ticker`.
 
 Per company, trading day, window (overnight, intraday, day) and source: the number of headlines and their mean sentiment score. The input to the correlations.
 
-License: **CC BY 4.0**. Dataset cadence: daily.
+License: **Source terms apply**. Dataset cadence: daily.
 
 ### `sentiment` (daily)
 

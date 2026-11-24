@@ -246,8 +246,7 @@ are gitignored.
   rolling rows are pruned by `store.prune_rolling_tickers` after each `rolling_analysis`
   (`analysis.keep_ticker_rolling_sessions`, month-end sessions kept) and the `vacuum` job
   reclaims the file space (SQLITE_TMPDIR on /data: the container's /tmp is a small tmpfs).
-  `publish.py` owns the license notices (`cc_by`, `cc_by_scored` for the tables with
-  FinBERT scores, `source_terms` for prices), the footer metadata every file gets (`file_metadata`, written by
+  `publish.py` owns the license notices (`cc_by` for Murmur's own tables, `news_terms` for news and sentiment and `source_terms` for prices, short "source terms apply, takedown available by request" notices), the footer metadata every file gets (`file_metadata`, written by
   `_write_frame`, kept through compaction, read back with `read_metadata`) and the rounding of
   caps/weights (`round_cap` 3 s.f., `round_weight` 4 dp, `public()` on API responses). `/data`
   responses add `Link` + `X-Murmur-*` license headers (`PublishedFiles._license_headers`).

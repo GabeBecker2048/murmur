@@ -99,12 +99,19 @@ theme = "auto"                  # "auto", "light" or "dark"; visitors can switch
 # flagged public = false). Empty = everything public. The prices table is
 # published under a "source terms apply" notice, not CC BY (see publish.py).
 private = []
-# Contact printed in every license notice, for takedown requests; default sec.contact.
+# Contact printed in every license notice and on the dashboard; default sec.contact.
 contact = ""
 
 [api]
 host = "0.0.0.0"
 port = 8100
+# Reverse proxies whose X-Forwarded-For is trusted (the rate limits key on the
+# visitor's address). Behind Caddy on another host, list that host's address.
+trusted_proxies = ["127.0.0.1"]
+# Per-client limits on the two expensive public routes; 0 = off. The API token
+# bypasses both.
+bundles_per_hour = 10
+searches_per_minute = 60
 # The bearer token for POST/PUT/DELETE comes from MURMUR_API_TOKEN (never a file).
 # MURMUR_CORS_ORIGINS (comma-separated) enables CORS for a UI served elsewhere.
 

@@ -394,14 +394,20 @@ def test_datasets_and_csv(client, provider):
     assert r.status_code == 200
     assert r.headers["x-murmur-license"].startswith("Source terms apply")
     assert (
-        r.headers["link"].startswith("<https://legal.yahoo.com")
+        r.headers["link"].startswith(
+            "<https://github.com/GabeBecker2048/murmur/blob/main/docs/dataset-card"
+        )
         and 'rel="license"' in r.headers["link"]
     )
     assert "Yahoo Finance" in r.headers["x-murmur-attribution"]
     # the CSV path carries the same headers (CSV has no footer)
     r = client.get(url + "?format=csv")
-    assert r.headers["x-murmur-license"] == "CC BY 4.0" and "creativecommons" in r.headers["link"]
-    assert parquet.headers["x-murmur-license"] == "CC BY 4.0"
+    assert (
+        r.headers["x-murmur-license"] == "Source terms apply"
+        and "dataset-card" in r.headers["link"]
+    )
+    assert parquet.headers["x-murmur-license"] == "Source terms apply"
+    assert manifest["datasets"]["m100"]["license"]["name"] == "CC BY 4.0"
 
 
 def test_private_datasets_need_the_token(tmp_path):

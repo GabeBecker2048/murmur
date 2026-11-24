@@ -40,8 +40,8 @@ from murmur.config import Config
 from murmur.publish import (
     DATA_VERSION,
     cc_by,
-    cc_by_scored,
     file_metadata,
+    news_terms,
     round_cap,
     round_weight,
     source_terms,
@@ -362,7 +362,7 @@ def datasets(config: Config) -> list[Dataset]:
     ``config.index.name``."""
     index = config.index
     contact = config.datasets.contact
-    CC_BY, CC_BY_SCORED, SOURCE_TERMS = cc_by(contact), cc_by_scored(contact), source_terms(contact)
+    CC_BY, NEWS_TERMS, SOURCE_TERMS = cc_by(contact), news_terms(contact), source_terms(contact)
     return [
         Dataset(
             "companies",
@@ -424,7 +424,7 @@ def datasets(config: Config) -> list[Dataset]:
             "assigned to, and the sentiment scores where the headline has been scored.",
             DAILY,
             (Table("articles", ARTICLES_COLUMNS, ("article_id", "ticker"), q_articles),),
-            CC_BY_SCORED,
+            NEWS_TERMS,
         ),
         Dataset(
             "sentiment",
@@ -441,7 +441,7 @@ def datasets(config: Config) -> list[Dataset]:
                     q_sentiment,
                 ),
             ),
-            CC_BY_SCORED,
+            NEWS_TERMS,
         ),
         Dataset(
             "correlations",

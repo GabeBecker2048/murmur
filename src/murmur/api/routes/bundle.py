@@ -5,12 +5,13 @@ from __future__ import annotations
 import threading
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from murmur import bundle
 from murmur.api.auth import has_token
 from murmur.api.deps import get_config
+from murmur.api.ratelimit import enforce
 from murmur.config import Config
 
 router = APIRouter(tags=["data"])
@@ -36,6 +37,7 @@ def _day(value: str, name: str) -> date:
     responses={200: {"content": {"application/gzip": {}, "application/json": {}}}},
 )
 def bundle_download(
+    request: Request,
     config: Config = Depends(get_config),
     authorized: bool = Depends(has_token),
     from_: str = Query(..., alias="from"),
@@ -50,7 +52,9 @@ def bundle_download(
     every license notice, ``index.json`` and ``SHA256SUMS``. ``datasets`` and ``tables``
     are comma-separated (empty = all public ones; a table may be ``dataset/table``).
     ``format=csv`` is limited to 93 days for ``news``. ``dry_run=true`` answers with
-    the plan and an estimated size instead. One bundle is built at a time (429)."""
+    the plan and an estimated size instead. One bundle is built at a time, and each
+    client may build ``api.bundles_per_hour`` (429 with Retry-After; dry runs and the
+    API token are exempt)."""
     try:
         p = bundle.plan(
             config,
@@ -66,6 +70,8 @@ def bundle_download(
         raise HTTPException(status, str(e)) from None
     if dry_run:
         return p.describe()
+    if not authorized:
+        enforce(request, "bundle", config.api.bundles_per_hour, 3600, "bundles")
     if not _BUILDING.acquire(blocking=False):
         raise HTTPException(
             429, "another bundle is being built; try again shortly", headers={"Retry-After": "30"}

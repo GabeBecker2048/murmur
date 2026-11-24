@@ -105,8 +105,8 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     ]
     prices_ds = index["datasets"]["prices"]
     assert prices_ds["cadence"] == "daily"
-    assert prices_ds["license"]["name"] == "Source terms apply (not openly licensed)"
-    assert "no rights" in prices_ds["license"]["note"] and prices_ds["license"]["contact"]
+    assert prices_ds["license"]["name"] == "Source terms apply"
+    assert "Takedown available" in prices_ds["license"]["note"] and prices_ds["license"]["contact"]
     assert index["datasets"]["m100"]["license"]["name"] == "CC BY 4.0"
     assert "licensing" in index
     assert prices_ds["tables"]["prices"]["key"] == ["ticker", "date"]
@@ -124,8 +124,10 @@ def test_export_layout(store, scorer, cfg):  # noqa: F811
     assert m100["m100/2026/11/202611.constituents.parquet"]["date"] == "2026-11"
     charts = [e for e in index["datasets"]["correlations"]["files"] if e["format"] == "png"]
     assert {e["table"] for e in charts} == {"charts"}
-    assert index["datasets"]["news"]["license"]["name"] == "CC BY 4.0"
-    assert "finbert" in index["datasets"]["news"]["license"]["attribution"]
+    assert index["datasets"]["news"]["license"]["name"] == "Source terms apply"
+    assert "Finnhub" in index["datasets"]["news"]["license"]["attribution"]
+    assert index["datasets"]["sentiment"]["license"]["name"] == "Source terms apply"
+    assert index["datasets"]["correlations"]["license"]["name"] == "CC BY 4.0"
 
 
 def test_index_name_follows_config(store, scorer, cfg, tmp_path):  # noqa: F811
@@ -334,7 +336,7 @@ def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
     assert daily["murmur_dataset"] == "prices" and daily["murmur_table"] == "prices"
     assert daily["license"].startswith("Source terms apply") and "yfinance" in daily["attribution"]
     assert (
-        "no rights" in daily["notice"]
+        "Takedown available by request" in daily["notice"]
         and daily["contact"]
         and daily["murmur_version"] == murmur.__version__
     )
@@ -342,12 +344,15 @@ def test_every_file_carries_license_metadata(store, scorer, cfg):  # noqa: F811
     monthly = read_metadata(base / "m100/2026/11/202611.constituents.parquet")
     assert monthly["license"] == "CC BY 4.0" and monthly["murmur_period"] == "2026-11"
     compacted = read_metadata(base / "news/2026/10/202610.articles.parquet")
-    assert compacted["license"] == "CC BY 4.0" and compacted["murmur_table"] == "articles"
-    assert "does not extend to its outputs" in compacted["notice"]
+    assert compacted["license"] == "Source terms apply" and compacted["murmur_table"] == "articles"
+    assert "finbert" in compacted["attribution"] and "Takedown" in compacted["notice"]
     assert compacted["murmur_period"] == "2026-10"
     # a second compaction (a later backfill) keeps the metadata
     export_day(store, cfg, oct30, today=TODAY)
-    assert read_metadata(base / "news/2026/10/202610.articles.parquet")["license"] == "CC BY 4.0"
+    assert (
+        read_metadata(base / "news/2026/10/202610.articles.parquet")["license"]
+        == "Source terms apply"
+    )
 
 
 def test_constituents_are_rounded(store, cfg):  # noqa: F811
