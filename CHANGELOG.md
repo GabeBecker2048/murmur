@@ -19,6 +19,9 @@ All notable changes to Murmur. The format follows
   notice (takedown available by request) instead of CC BY 4.0; `companies`, the index,
   `correlations` and the findings stay CC BY 4.0. Notices only: the schema and the
   dataset version (v1.0.0) are unchanged.
+- Offsite copies go to one key (`<prefix>/store/murmur.sqlite.gz`) in a versioned
+  bucket, so the lifecycle rule can keep a number of snapshots rather than an age:
+  uploads that stop for a while no longer let every copy expire.
 - The offsite restore check uses per-process file names (a manual `murmur offsite
   --verify` running alongside the service's own check broke both) and removes the
   `-wal`/`-shm` files that opening the WAL-mode copy leaves behind.

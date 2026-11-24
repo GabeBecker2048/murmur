@@ -482,8 +482,9 @@ Every day at `backup.time` (04:30) the scheduler queues a `backup` job: the
 worker copies the store with SQLite's online backup API (the DB is in WAL mode,
 so never `cp` it), checks its integrity and keeps `backup.keep` (3) snapshots in
 `data/backups`. The `murmur-backup` service (`murmur offsite`) uploads each new
-snapshot, gzipped with its SHA-256 in the object metadata, to
-`s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/`, plus `settings.toml`, and
+snapshot, gzipped with its SHA-256 and snapshot name in the object metadata, to
+`s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/murmur.sqlite.gz` (always the same
+key), plus `settings.toml`, and
 checks the size the bucket reports. It never opens the store: its data mount
 is read-only except `data/offsite` (status, heartbeat, staging). It is the only
 service that reads `s3.env`:
@@ -496,9 +497,14 @@ AWS_SECRET_ACCESS_KEY=...    #   check) and s3:ListBucket on the prefix; nothing
 # MURMUR_S3_ENDPOINT=...     # for an S3-compatible provider
 ```
 
-Old copies are deleted by a lifecycle rule on the bucket (30 days), so the key
-cannot delete anything. The published tree is not uploaded: `murmur export
---all` regenerates it from the store. To restore: download a snapshot,
+The bucket has **versioning on**, so each upload turns the previous snapshot into
+a noncurrent version, and a lifecycle rule keeps a **count** of those: "permanently
+delete noncurrent versions" after 1 day with 29 newer noncurrent versions retained
+(30 snapshots in all), no expiry of the current version, and incomplete multipart
+uploads aborted after 7 days. Retention by count means a month without uploads
+deletes nothing. The key cannot delete anything. The published tree is not uploaded: `murmur export
+--all` regenerates it from the store. To restore: download a snapshot (an older one is a version:
+`aws s3api list-object-versions`, then `get-object --version-id`),
 `gunzip`, check `sha256sum` against the object's `sha256` metadata, stop the
 stack, put it at `data/murmur.sqlite` (remove any `-wal`/`-shm`), start.
 Once a week the service also runs a restore drill on the newest copy (download, SHA-256

@@ -84,7 +84,7 @@ retry_delay_minutes = 20
 # snapshot to S3 when MURMUR_S3_BUCKET is set in its environment (keys never live here).
 time = "04:30"                  # local time; empty = no scheduled snapshot
 keep = 3                        # snapshots kept on the data volume
-prefix = "murmur"               # S3 key prefix: <prefix>/store/murmur_<stamp>.sqlite.gz
+prefix = "murmur"               # S3 key prefix: <prefix>/store/murmur.sqlite.gz (versioned)
 max_age_hours = 30              # the health report flags an older last upload
 
 [ui]

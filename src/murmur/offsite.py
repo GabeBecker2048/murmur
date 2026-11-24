@@ -6,7 +6,12 @@ store: it gzips the newest finished snapshot into its own staging directory, upl
 it with a SHA-256 in the object metadata, checks the size the bucket reports, and
 records the result in ``<data_dir>/offsite/status.json``. So the container can mount
 the data volume read-only except ``offsite/``, and it is the only process that holds
-the S3 credentials (env only; deleting old copies is the bucket's lifecycle rule).
+the S3 credentials (env only; it cannot delete anything).
+
+Every snapshot is uploaded to the same key, ``<prefix>/store/murmur.sqlite.gz``, in a
+bucket with versioning on, so older snapshots become noncurrent versions. The bucket's
+lifecycle rule keeps a NUMBER of them (NewerNoncurrentVersions), not an age: if uploads
+stop for a month, the copies already there stay (2026-11-24, Gabe's call).
 
 Env: ``MURMUR_S3_BUCKET`` (unset = not configured: the service idles, healthy),
 ``MURMUR_S3_REGION``, ``MURMUR_S3_ENDPOINT`` (for an S3-compatible provider),
@@ -153,6 +158,15 @@ def _gzip_with_sha256(src: Path, dest: Path) -> tuple[str, int]:
     return digest.hexdigest(), src.stat().st_size
 
 
+STORE_OBJECT = "murmur.sqlite.gz"
+
+
+def store_key(config: Config) -> str:
+    """The one key every snapshot is uploaded to (older ones live on as versions; the
+    snapshot's own name is in the object metadata as ``source``)."""
+    return f"{config.backup.prefix}/store/{STORE_OBJECT}"
+
+
 def upload_pending(config: Config, target: Target, settings: S3Settings | None = None) -> dict:
     """Upload the newest finished snapshot if it has not been uploaded yet. Older
     snapshots that were never uploaded are skipped: the newest supersedes them.
@@ -170,7 +184,7 @@ def upload_pending(config: Config, target: Target, settings: S3Settings | None =
         _write_status(config, status)
         return status
     snap = snapshots[-1]
-    key = f"{config.backup.prefix}/store/{snap.name}.gz"
+    key = store_key(config)
     staging = config.offsite_dir / "staging"
     staging.mkdir(parents=True, exist_ok=True)
     gz = staging / f"{snap.name}.gz"
