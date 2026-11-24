@@ -59,7 +59,7 @@ def test_uploads_the_newest_finished_snapshot_once(cfg):
     cfg.settings_path.write_text("[schedule]\npaused = false\n")
     target = FakeTarget()
     status = offsite.upload_pending(cfg, target, offsite.S3Settings("b", None, None))
-    key = "test/murmur/store/murmur_2026-11-07_043000.sqlite.gz"
+    key = "test/murmur/store/murmur.sqlite.gz"  # one key; older snapshots are versions
     assert set(target.objects) == {key, "test/murmur/settings.toml"}
     assert gzip.decompress(target.objects[key]) == snap.read_bytes()
     assert target.metadata[key]["source"] == snap.name and len(target.metadata[key]["sha256"]) == 64
@@ -146,6 +146,9 @@ def real_store_snapshot(cfg, name="murmur_2026-11-07_043000.sqlite"):
     path = cfg.backups_dir / name
     con = sqlite3.connect(path)
     con.executescript(
+        # WAL like the real snapshots: opening the copy creates -wal/-shm files that
+        # the drill must clean up.
+        "PRAGMA journal_mode = wal;"
         "CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT);"
         "INSERT INTO articles (title) VALUES ('a'), ('b');"
         "PRAGMA user_version = 13;"

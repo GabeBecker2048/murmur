@@ -6,17 +6,17 @@ import { el, clear, setTitle, link } from "../lib.js";
 const PEOPLE = [
   {
     name: "Gabe",
-    role: "Data engineer at a FinTech company",
+    role: "Data Engineer at Code Willing, a FinTech company",
     built: "Wrote the framework that connected everything in the prototype, then rebuilt Murmur from the ground up.",
   },
   {
     name: "Wyatt",
-    role: "Support engineer at the same company",
-    built: "Wrote the price fetching for the prototype, in Python.",
+    role: "Support Engineer, also at Code Willing",
+    built: "Wrote the price fetching and Dockerfile for the prototype.",
   },
   {
     name: "Sam",
-    role: "Business analytics student",
+    role: "Business Analyst at Capital One",
     built: "Brought the idea from a class on sentiment analysis, and wrote the prototype's sentiment analysis in R.",
   },
 ];
@@ -49,14 +49,13 @@ const TIMELINE = [
     body: ["It made a cool prototype. Then work and school took over, and all three moved on to other things."],
   },
   {
-    when: "November 2026",
+    when: "Since March 2026",
     title: "Murmur",
     now: true,
     body: [
-      "Gabe, a data engineer by trade, picked the project back up and rebuilt it from scratch as a production pipeline: a daily job on a home server, a year of history backfilled, a finance-trained language model reading every headline, open datasets anyone can download, and this dashboard. Version 0.1.0 to 0.9.0 took two weeks.",
+      "Gabe, a data engineer by trade, picked the project back up and rebuilt it from scratch as a production pipeline: a daily job on a home server, a year of history backfilled, a finance-trained language model reading every headline, open datasets anyone can download, and this dashboard.",
       "For the first time the answer is concrete. The prototype's results had been inconclusive; a full year of data, checked against the market's own moves, a day-by-day estimate and shuffled headlines, now gives a clear answer: news moves with stock prices on the same day and trails them a little, but does not predict the next day.",
       "All three friends agreed to publish it in the open: the code, the data and the findings, free for anyone to use, study and build on.",
-      "The question is the same one the three friends started with.",
     ],
   },
 ];

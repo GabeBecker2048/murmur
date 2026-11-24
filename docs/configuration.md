@@ -43,16 +43,19 @@ Editable from the admin page unless marked locked.
 | `ui.default_months` | choice (1, 3, 6, 12) | 3 | Rolling horizon the dashboard opens with. |
 | `ui.default_method` | choice (pearson, spearman) | "pearson" | Correlation method the dashboard opens with. |
 | `ui.theme` | choice (auto, light, dark) | "auto" | Default theme; visitors can switch. |
-| `datasets.contact` | string | "" | Contact printed in every license notice (takedown requests); default sec.contact. |
+| `datasets.contact` | string | "" | Contact in every license notice and on the dashboard; default sec.contact. |
 | `datasets.private` | list (companies, prices, news, sentiment, correlations) | [] | Datasets served only with the API token (kept in the manifest, flagged public=false). prices stays here until the source's terms allow publishing. |
 | `data_dir` | string | "data" | Data directory (env MURMUR_DATA_DIR). Restart to change. Locked: not editable from the API. |
 | `timezone` | string | "America/New_York" | Exchange timezone; the calendar is NYSE regardless. Locked: not editable from the API. |
 | `api.host` | string | "0.0.0.0" | Bind address. Locked: not editable from the API. |
 | `api.port` | integer | 8100 | Bind port. Locked: not editable from the API. |
+| `api.trusted_proxies` | list | ["127.0.0.1"] | Reverse proxies whose X-Forwarded-For is trusted, so rate limits see the visitor's address. Restart to change. Locked: not editable from the API. |
+| `api.bundles_per_hour` | integer | 10 | Range bundles one client may build per hour (0 = no limit; dry runs are free). |
+| `api.searches_per_minute` | integer | 60 | Headline searches one client may make per minute (0 = no limit). |
 | `finnhub.api_key` | secret | "" | Env MURMUR_FINNHUB_API_KEY. Locked: not editable from the API. |
 | `polygon.api_key` | secret | "" | Env MURMUR_POLYGON_API_KEY. Locked: not editable from the API. |
 
-Locked keys (file or environment only): `data_dir`, `timezone`, `api.host`, `api.port`, `finnhub.api_key`, `polygon.api_key`.
+Locked keys (file or environment only): `data_dir`, `timezone`, `api.host`, `api.port`, `api.trusted_proxies`, `finnhub.api_key`, `polygon.api_key`.
 
 ## Environment
 

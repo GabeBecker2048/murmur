@@ -137,6 +137,12 @@ async function boot() {
     state.ui = await api("ui");
     document.getElementById("nav-index").textContent = (state.ui.index && state.ui.index.title) || "Index";
     document.getElementById("foot-version").textContent = `version ${state.ui.version}`;
+    if (state.ui.contact) {
+      const c = document.getElementById("foot-contact");
+      c.textContent = state.ui.contact;
+      c.href = `mailto:${state.ui.contact}`;
+      c.removeAttribute("data-link");
+    }
     if (state.ui.theme && state.ui.theme !== "auto" && !document.documentElement.dataset.theme) {
       let stored = null;
       try {

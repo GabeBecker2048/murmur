@@ -1,6 +1,17 @@
 # Murmur: the API, the daily scheduler and the job worker in one process
 # (`murmur serve`). CPU-only torch (the lock pins the PyTorch CPU index on
 # Linux). Runs as uid 1000 with /data as the only writable path.
+FROM python:3.11-slim AS lockfiles
+
+# pyproject.toml and uv.lock with Murmur's own version blanked out. A release changes
+# only that version, so the dependency layer below (531 MB) stays byte-identical and
+# servers that already have it download a few MB instead (0.9.0-0.9.2 each shipped a
+# new copy of it).
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+RUN sed -i '0,/^version = /s/^version = .*/version = "0.0.0"/' pyproject.toml \
+ && sed -i '/^name = "murmur"$/{n;s/^version = .*/version = "0.0.0"/}' uv.lock
+
 FROM python:3.11-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.4 /uv /uvx /bin/
@@ -12,12 +23,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first so source changes do not invalidate this layer.
-COPY pyproject.toml uv.lock ./
+# Dependencies first, from the version-blanked lock files, so neither source changes
+# nor a version bump invalidate this layer.
+COPY --from=lockfiles /src/pyproject.toml /src/uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project
 
-COPY README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev

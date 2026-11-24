@@ -2,11 +2,11 @@
 every published file, and the rounding applied to market caps and weights before
 they are served or exported.
 
-Everything Murmur compiles or computes is CC BY 4.0, including the tables that carry
-FinBERT scores: the model's CC BY-NC-SA license governs the weights, not their
-outputs. Prices (with the returns computed from them) are someone else's facts
-collected under their terms, so that table carries no license from Murmur, only a
-notice. Caps and weights are rounded
+Murmur's own work (the companies list, the index, the correlations and the findings)
+is CC BY 4.0. Headlines, the sentiment computed from them and prices come from
+third-party sources, so those tables carry a short "source terms apply" notice
+instead of a license from Murmur (the same treatment for all three).
+Caps and weights are rounded
 so a published index can never stand in for a close: a cap to three significant
 figures and a weight to four decimals recover a price to about a tenth of a percent
 at best, the precision of a newspaper, not of a feed.
@@ -34,7 +34,7 @@ WEIGHT_DECIMALS = 4
 ROUNDED_KEYS = ("market_cap", "weight")
 
 CC_BY_URL = "https://creativecommons.org/licenses/by/4.0/"
-YAHOO_TERMS_URL = "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html"
+TERMS_URL = "https://github.com/GabeBecker2048/murmur/blob/main/docs/dataset-card.md#distribution-and-licenses"
 MURMUR = "Murmur (github.com/GabeBecker2048/murmur)"
 
 
@@ -52,41 +52,33 @@ def cc_by(contact: str) -> dict:
     }
 
 
-def cc_by_scored(contact: str) -> dict:
-    """The tables that carry FinBERT scores: CC BY 4.0 on Murmur's compilation. The model
-    is CC BY-NC-SA 4.0, but that license governs the weights, which Murmur runs
-    non-commercially and does not redistribute; it does not extend to the model's
-    outputs (Creative Commons' own position on model outputs), and a score is factual
-    data with no authorship of the model's publisher in it."""
+NEWS_SOURCES = "Finnhub and Yahoo Finance"
+PRICE_SOURCE = "Yahoo Finance via yfinance"
+
+
+def source_terms(
+    contact: str, what: str = "prices", source: str = PRICE_SOURCE, credit: str = ""
+) -> dict:
+    """The tables built from third-party data (headlines, their sentiment, prices): no
+    license from Murmur; the sources' terms apply and a takedown is available by
+    request. Kept short on purpose."""
     return {
-        "name": "CC BY 4.0",
-        "url": CC_BY_URL,
-        "attribution": f"{MURMUR}; scores produced with ProsusAI/finbert",
+        "name": "Source terms apply",
+        "url": TERMS_URL,
+        "attribution": f"{what.capitalize()}: {source}{credit}; compiled by {MURMUR}",
         "note": (
-            "Murmur's compilation, licensed CC BY 4.0. Sentiment scores were produced with "
-            "FinBERT (ProsusAI/finbert, CC BY-NC-SA 4.0); the model is not redistributed and "
-            "its license does not extend to its outputs. Headlines and URLs are quoted for "
-            "identification; they remain their publishers'."
+            f"The {what} come from {source}, whose terms apply. Republished for "
+            "non-commercial research, as-is. Takedown available by request."
         ),
         "contact": contact,
     }
 
 
-def source_terms(contact: str, source: str = "Yahoo Finance via yfinance") -> dict:
-    """The prices table: no license from Murmur, the source's terms apply."""
-    return {
-        "name": "Source terms apply (not openly licensed)",
-        "url": YAHOO_TERMS_URL,
-        "attribution": f"Prices: {source} (unofficial, as-is)",
-        "note": (
-            "Murmur grants no rights in this table. The bars are collected from "
-            f"{source} and republished for non-commercial research; use remains subject "
-            "to the source's terms and the exchanges' data policies. Returns and split "
-            "adjustments are computed by Murmur from those bars. No warranty; not official "
-            "exchange data. Takedown requests: see contact."
-        ),
-        "contact": contact,
-    }
+def news_terms(contact: str) -> dict:
+    """The headline and sentiment tables."""
+    return source_terms(
+        contact, "headlines", NEWS_SOURCES, "; sentiment scores produced with ProsusAI/finbert"
+    )
 
 
 def file_metadata(dataset: str, table: str, license: Mapping, extra: Mapping | None = None) -> dict:

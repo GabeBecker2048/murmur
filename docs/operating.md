@@ -224,7 +224,7 @@ from the package, Plotly.js vendored, no build step, talking only to
 | Murmur 100 | the daily level against the S&P 500, constituents with rank and weight, changes, downloads |
 | Headlines | every scored headline, searchable by words, company, tone, source and date |
 | Data (`/downloads`) | a bundle of any date range (size estimate, curl/pandas/DuckDB snippets), monthly archives, the stable latest URLs, every file with its license and columns |
-| Methodology | how every number is made, the checks, limitations, the dataset version, licenses, contact and takedown |
+| Methodology | how every number is made, the checks, limitations, the dataset version, licenses and contact |
 | Story | how the project started, who built what, the prototype and the rebuild |
 | Status | services, the last two weeks of runs, the last 30 sessions' coverage |
 | Admin (`/admin`, not linked) | sign in with the API token: jobs, backfill form, scheduler, every setting as a form, the process log |
@@ -281,6 +281,14 @@ they answer 503. Settings written through the API land in
 `<data_dir>/settings.toml`, a layer above the ops file and below the
 environment; secrets and the data directory can only be set in the
 environment.
+
+The two expensive public routes are rate-limited per client: range bundles
+(`api.bundles_per_hour`, 10; dry runs are free) and headline search
+(`api.searches_per_minute`, 60). Over the limit they answer 429 with
+`Retry-After`; the API token bypasses both, and 0 turns a limit off. The client
+is the connecting address, or the `X-Forwarded-For` address when the connection
+comes from one of `api.trusted_proxies` (set this to the reverse proxy's address,
+or every visitor shares the proxy's quota).
 
 ```bash
 curl -s localhost:8100/api/v1/latest | jq .matched_pairs
@@ -431,15 +439,10 @@ index and may be smaller than it; a Murmur 250 is `[index] name = "m250"`,
 **Licenses.** Stated per dataset in `index.json`, stamped into every Parquet
 footer (`license`, `license_url`, `attribution`, `notice`, `contact`) and sent as
 `Link`/`X-Murmur-*` headers on every `/data` response, so a CSV download carries
-them too. Everything Murmur compiles or computes is CC BY 4.0: `companies`, `m100`,
-`correlations`, and also `news` and `sentiment`. The scores in those two come from
-FinBERT, whose CC BY-NC-SA license governs the model weights (run non-commercially,
-never redistributed) and not the model's outputs, which is Creative Commons' own
-position; the notice credits the model. `prices` (bars and returns) carries **no
-license from Murmur**: the bars are Yahoo Finance's facts collected under their
-terms and republished as-is for non-commercial research; use remains subject to
-the source's terms and the exchanges' policies, and a takedown contact is in the
-notice. Market caps are rounded to three significant figures and weights to four
+them too. Murmur's own work is CC BY 4.0: `companies`, `m100`, `correlations` and
+the findings. `news`, `sentiment` and `prices` are built from third-party data
+(Finnhub and Yahoo Finance headlines, Yahoo Finance bars) and carry a short "source
+terms apply" notice instead, with a takedown available by request. Market caps are rounded to three significant figures and weights to four
 decimals everywhere, so the index cannot be read back into prices.
 
 ## Release and deploy
@@ -479,8 +482,9 @@ Every day at `backup.time` (04:30) the scheduler queues a `backup` job: the
 worker copies the store with SQLite's online backup API (the DB is in WAL mode,
 so never `cp` it), checks its integrity and keeps `backup.keep` (3) snapshots in
 `data/backups`. The `murmur-backup` service (`murmur offsite`) uploads each new
-snapshot, gzipped with its SHA-256 in the object metadata, to
-`s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/`, plus `settings.toml`, and
+snapshot, gzipped with its SHA-256 and snapshot name in the object metadata, to
+`s3://$MURMUR_S3_BUCKET/<backup.prefix>/store/murmur.sqlite.gz` (always the same
+key), plus `settings.toml`, and
 checks the size the bucket reports. It never opens the store: its data mount
 is read-only except `data/offsite` (status, heartbeat, staging). It is the only
 service that reads `s3.env`:
@@ -493,9 +497,14 @@ AWS_SECRET_ACCESS_KEY=...    #   check) and s3:ListBucket on the prefix; nothing
 # MURMUR_S3_ENDPOINT=...     # for an S3-compatible provider
 ```
 
-Old copies are deleted by a lifecycle rule on the bucket (30 days), so the key
-cannot delete anything. The published tree is not uploaded: `murmur export
---all` regenerates it from the store. To restore: download a snapshot,
+The bucket has **versioning on**, so each upload turns the previous snapshot into
+a noncurrent version, and a lifecycle rule keeps a **count** of those: "permanently
+delete noncurrent versions" after 1 day with 29 newer noncurrent versions retained
+(30 snapshots in all), no expiry of the current version, and incomplete multipart
+uploads aborted after 7 days. Retention by count means a month without uploads
+deletes nothing. The key cannot delete anything. The published tree is not uploaded: `murmur export
+--all` regenerates it from the store. To restore: download a snapshot (an older one is a version:
+`aws s3api list-object-versions`, then `get-object --version-id`),
 `gunzip`, check `sha256sum` against the object's `sha256` metadata, stop the
 stack, put it at `data/murmur.sqlite` (remove any `-wal`/`-shm`), start.
 Once a week the service also runs a restore drill on the newest copy (download, SHA-256

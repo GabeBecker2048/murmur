@@ -11,7 +11,6 @@
 [![Release](https://img.shields.io/github/v/release/GabeBecker2048/murmur)](https://github.com/GabeBecker2048/murmur/releases)
 [![Docker image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker&logoColor=white)](https://github.com/GabeBecker2048/murmur/pkgs/container/murmur)
 [![License: MIT](https://img.shields.io/badge/code-MIT-blue)](LICENSE)
-[![Data: CC BY 4.0](https://img.shields.io/badge/data-CC%20BY%204.0-green)](docs/dataset-card.md)
 [![Dataset v1.0.0](https://img.shields.io/badge/dataset-v1.0.0-informational)](docs/stability.md)
 
 </div>
@@ -27,8 +26,8 @@
 it up with what their stocks did.** It collects each company's headlines, has FinBERT (a
 language model trained on financial text) score their tone, pairs that with the stock's
 overnight, intraday and daily returns, and asks whether the news came before the move,
-with it, or after it. Everything it collects and computes is published as free, open
-data, with a dashboard, an API and a feed on top.
+with it, or after it. Everything it collects and computes is published as free data,
+with a dashboard, an API and a feed on top.
 
 - **Free datasets, updated daily.** Headlines with their sentiment scores, daily
   sentiment per company, the Murmur 100 (a free cap-weighted index of the 100 largest
@@ -129,13 +128,14 @@ uv run pytest                     # no network, no model download
 Murmur started in 2023 as a side project between three friends, and was rebuilt into
 what it is now in 2026. Read the story on the dashboard.
 
-- Gabe Becker ([@GabeBecker2048](https://github.com/GabeBecker2048))
+- Gabe Becker ([@GabeBecker2048](https://github.com/GabeBecker2048), gabebecker2048@gmail.com)
 - Wyatt Burch-Celentano ([@wyatthbc](https://github.com/wyatthbc))
 - Sam Chapoton ([@samchapoton](https://github.com/samchapoton))
 
 ## License
 
-Code: MIT, see [LICENSE](LICENSE). Data: CC BY 4.0 for everything Murmur compiles or
-computes; prices are republished under their source's terms. Headlines belong to their
-publishers. FinBERT (`ProsusAI/finbert`) is used under its own license and not
-redistributed. Space Grotesk is under the SIL Open Font License. Not investment advice.
+Code: MIT, see [LICENSE](LICENSE). Data: CC BY 4.0 for Murmur's own work (companies,
+the index, correlations, findings); headlines, sentiment and prices: source terms apply,
+takedown available by request. FinBERT (`ProsusAI/finbert`) is used under its own
+license and not redistributed. Space Grotesk is under the SIL Open Font License. Not
+investment advice. Questions: gabebecker2048@gmail.com.

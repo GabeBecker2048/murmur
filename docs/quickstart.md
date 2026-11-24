@@ -77,6 +77,7 @@ calendar day: use the session order in `prices`, not date arithmetic.
 
 ## Licenses and citing
 
-Everything is CC BY 4.0 except `prices` (source terms apply). Every file says so in its
+`companies`, `m100`, `correlations` and the findings are CC BY 4.0; `news`, `sentiment`
+and `prices` follow their sources' terms. Every file says so in its
 Parquet footer. To cite: `CITATION.cff` in the repository, or
 `$MURMUR/api/v1/citation` (`?findings=latest` for the findings).

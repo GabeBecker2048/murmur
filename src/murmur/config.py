@@ -41,7 +41,7 @@ TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 
 SECRET_KEYS = ("finnhub.api_key", "polygon.api_key")
 """Masked when shown, refused when edited through the API."""
-LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", *SECRET_KEYS)
+LOCKED_KEYS = ("data_dir", "timezone", "api.host", "api.port", "api.trusted_proxies", *SECRET_KEYS)
 """Keys the settings API refuses: they need a restart, or are secrets."""
 
 # Tables that a higher layer replaces wholesale instead of merging key by key.
@@ -179,7 +179,7 @@ class DatasetsConfig:
     """Datasets whose files `/data` refuses without the API token. They stay in the manifest,
     flagged ``public: false``."""
     contact: str
-    """Takedown / questions address printed in every license notice (default: sec.contact)."""
+    """Contact printed in every license notice and on the dashboard (default: sec.contact)."""
 
 
 @dataclass(frozen=True)
@@ -189,6 +189,13 @@ class ApiConfig:
     token: str
     """Bearer token for mutating endpoints; env only. Empty = writes refused (503)."""
     cors_origins: tuple[str, ...]
+    trusted_proxies: tuple[str, ...] = ("127.0.0.1",)
+    """Addresses whose X-Forwarded-For is believed (uvicorn's forwarded_allow_ips), so
+    the rate limits see the visitor rather than the reverse proxy. Restart to change."""
+    bundles_per_hour: int = 10
+    """Range bundles one client may build per hour (0 = no limit; dry runs are free)."""
+    searches_per_minute: int = 60
+    """Headline searches one client may make per minute (0 = no limit)."""
 
 
 @dataclass(frozen=True)
@@ -395,6 +402,14 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
         cors = api.get("cors_origins", ())
         if isinstance(cors, str):
             cors = tuple(x.strip() for x in cors.split(",") if x.strip())
+        proxies = api.get("trusted_proxies", ("127.0.0.1",))
+        if isinstance(proxies, str):
+            proxies = tuple(x.strip() for x in proxies.split(",") if x.strip())
+        defaults = (("bundles_per_hour", 10), ("searches_per_minute", 60))
+        limits = {k: int(api.get(k, d)) for k, d in defaults}
+        for k, v in limits.items():
+            if v < 0:
+                raise ConfigError(f"api.{k} must be >= 0, not {v}")
         port = int(api.get("port", 8100))
         if not 1 <= port <= 65535:
             raise ConfigError(f"api.port must be 1..65535, not {port}")
@@ -479,6 +494,8 @@ def _build(raw: dict, user_path: Path | None, provenance: dict[str, str]) -> Con
                 port=port,
                 token=str(api.get("token", "")),
                 cors_origins=tuple(cors),
+                trusted_proxies=tuple(str(x) for x in proxies),
+                **limits,
             ),
             ui=UiConfig(
                 title=str(ui.get("title", "Murmur")),
@@ -722,7 +739,7 @@ SETTINGS_SCHEMA: list[dict] = [
     {
         "path": "datasets.contact",
         "type": "string",
-        "help": "Contact printed in every license notice (takedown requests); default sec.contact.",
+        "help": "Contact in every license notice and on the dashboard; default sec.contact.",
     },
     {
         "path": "datasets.private",
@@ -760,6 +777,28 @@ SETTINGS_SCHEMA: list[dict] = [
         "editable": False,
         "restart_required": True,
         "help": "Bind port.",
+    },
+    {
+        "path": "api.trusted_proxies",
+        "type": "list",
+        "editable": False,
+        "restart_required": True,
+        "help": (
+            "Reverse proxies whose X-Forwarded-For is trusted, so rate limits see the"
+            " visitor's address. Restart to change."
+        ),
+    },
+    {
+        "path": "api.bundles_per_hour",
+        "type": "integer",
+        "min": 0,
+        "help": "Range bundles one client may build per hour (0 = no limit; dry runs are free).",
+    },
+    {
+        "path": "api.searches_per_minute",
+        "type": "integer",
+        "min": 0,
+        "help": "Headline searches one client may make per minute (0 = no limit).",
     },
     {
         "path": "finnhub.api_key",

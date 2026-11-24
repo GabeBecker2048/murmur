@@ -1,7 +1,7 @@
 ---
 # Hugging Face dataset card header, for the 1.0 mirror (the layout on HF will match /data).
 pretty_name: Murmur
-license: cc-by-4.0
+license: other  # CC BY 4.0 for Murmur's own tables; source terms for news, sentiment, prices
 language:
   - en
 task_categories:
@@ -116,12 +116,10 @@ What stays stable: [stability.md](stability.md). Versions: [data-changelog.md](d
 - Served from `/data/` as Parquet (CSV on request with `?format=csv`), as monthly
   `.tar.gz` archives and as range bundles (`/api/v1/bundle`). `index.json` is the
   manifest.
-- **CC BY 4.0** for everything Murmur compiles or computes: companies, the index, news
-  (headlines and URLs are quoted for identification; they remain their publishers'),
-  sentiment, correlations and findings. FinBERT's CC BY-NC-SA 4.0 license governs the
-  model weights, which are not redistributed, not its outputs.
-- **Prices** carry no license from Murmur: they are republished for non-commercial
-  research under the source's terms, with a takedown contact.
+- **CC BY 4.0** for Murmur's own work: companies, the index, correlations and findings.
+- **Source terms apply** to `news` and `sentiment` (headlines from Finnhub and Yahoo
+  Finance, scored with FinBERT) and to `prices` (Yahoo Finance via yfinance).
+  Republished for non-commercial research, as-is. Takedown available by request.
 - Every file carries its license, notice and contact in its Parquet footer.
 
 ## Maintenance
@@ -129,6 +127,5 @@ What stays stable: [stability.md](stability.md). Versions: [data-changelog.md](d
 - Updated every trading day; finished months are compacted and archived.
 - Versioned: the data version is in every file. Breaking changes are announced in
   [data-changelog.md](data-changelog.md) at least 90 days ahead.
-- **Contact and takedown requests:** the `contact` field in any file's footer, the
-  `X-Murmur-Contact` header on `/data` responses, or the issue tracker of the repository.
-  A request concerning a source's data is acted on by removing the affected table.
+- **Contact:** gabebecker2048@gmail.com (also the `contact` field in every file's
+  footer), or the repository's issue tracker.

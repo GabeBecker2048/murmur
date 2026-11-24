@@ -12,7 +12,7 @@ export async function render(main) {
   setTitle("Methodology");
   const ui = state.ui || {};
   const manifest = await api("/data/index.json").catch(() => ({}));
-  const contact = Object.values(manifest.datasets || {}).map((d) => d.license && d.license.contact).find(Boolean);
+  const contact = ui.contact || Object.values(manifest.datasets || {}).map((d) => d.license && d.license.contact).find(Boolean);
   const size = (ui.index && ui.index.size) || 100;
 
   const sections = [
@@ -26,7 +26,7 @@ export async function render(main) {
     ["limits", "Limitations"],
     ["versions", "Versions and stability"],
     ["licenses", "Licenses"],
-    ["contact", "Contact and takedown"],
+    ["contact", "Contact"],
   ];
 
   const body = el(
@@ -83,13 +83,13 @@ export async function render(main) {
     H("licenses", "Licenses"),
     UL(
       "Code: MIT.",
-      "Data: CC BY 4.0 for everything Murmur compiles or computes: companies, the index, headlines with their scores, sentiment, correlations and findings. Attribute “Murmur”. Headlines and URLs are quoted for identification and remain their publishers'. FinBERT's CC BY-NC-SA license governs the model, which is not redistributed, not its scores.",
-      "Prices and returns carry no license from Murmur: they are republished for non-commercial research under the source's terms (Yahoo Finance via yfinance), and will be removed on request.",
+      "Murmur's own work: CC BY 4.0. That is the companies list, the Murmur 100, the correlations and the findings. Attribute “Murmur”.",
+      "Headlines and sentiment (Finnhub and Yahoo Finance) and prices (Yahoo Finance via yfinance): source terms apply. Takedown available by request.",
     ),
     P("Every file carries its license, notice and contact in its metadata. To cite Murmur, see ", link("/", "the Findings page"), " (Use it) or the repository's CITATION.cff."),
 
-    H("contact", "Contact and takedown"),
-    P(contact ? `Questions, corrections and takedown requests: ${contact}. A request about a source's data is handled by removing the affected table.` : "Questions, corrections and takedown requests: see the contact field in any file's metadata."),
+    H("contact", "Contact"),
+    P("Questions, corrections or anything else: ", contact ? el("a", { href: `mailto:${contact}` }, contact) : "see the contact field in any file's metadata", "."),
   );
 
   clear(main).append(

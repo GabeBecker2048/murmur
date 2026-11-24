@@ -317,7 +317,15 @@ def serve_http(config_path: str | None, worker: bool = True, scheduler: bool = T
     provider = ConfigProvider(config_path)
     config = provider.get()
     app = create_app(provider, run_worker=worker, run_scheduler=scheduler and worker)
-    uvicorn.run(app, host=config.api.host, port=config.api.port, log_level="info", access_log=False)
+    uvicorn.run(
+        app,
+        host=config.api.host,
+        port=config.api.port,
+        log_level="info",
+        access_log=False,
+        proxy_headers=True,
+        forwarded_allow_ips=list(config.api.trusted_proxies),
+    )
     return 0
 
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from murmur.api.auth import has_token
 from murmur.api.deps import get_config, get_store
+from murmur.api.ratelimit import enforce
 from murmur.clock import parse_date
 from murmur.config import Config
 from murmur.store import Store
@@ -21,6 +23,8 @@ def _date(value: str, name: str) -> str:
 
 @router.get("/articles")
 def articles(
+    request: Request,
+    authorized: bool = Depends(has_token),
     store: Store = Depends(get_store),
     config: Config = Depends(get_config),
     q: str | None = None,
@@ -35,7 +39,10 @@ def articles(
 ):
     """Headlines, newest first, with their FinBERT scores. ``q`` matches words in the
     title (case-insensitive, at least 2 characters); ``sentiment`` = positive,
-    negative or neutral (FinBERT's label)."""
+    negative or neutral (FinBERT's label). Each client may search
+    ``api.searches_per_minute`` times a minute (429 with Retry-After)."""
+    if not authorized:
+        enforce(request, "articles", config.api.searches_per_minute, 60, "searches")
     if q is not None and len(q.strip()) < 2:
         raise HTTPException(422, "q needs at least 2 characters")
     if sentiment not in (None, "", "positive", "negative", "neutral"):

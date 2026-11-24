@@ -1,7 +1,7 @@
 // Data: build a bundle of any date range, take a ready-made monthly archive, use the
 // stable latest URLs, or browse every file. The builder's choices live in the URL.
 
-import { api, qs, el, card, clear, table, fmt, setTitle, field, segmented, badge, navigate, link, codeBlock, state } from "../lib.js";
+import { api, qs, el, append, card, clear, table, fmt, setTitle, field, segmented, badge, navigate, link, codeBlock, state } from "../lib.js";
 import { DELIVERY } from "./overview.js";
 
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -222,7 +222,7 @@ export async function render(main, parts, query) {
       el(
         "p",
         { class: "lede" },
-        `Everything Murmur publishes, from ${first || "–"} to ${last || "–"}: free to use under CC BY 4.0 (prices: the source's terms). Dataset ${manifest.data_version ? `v${manifest.data_version}` : "v1.0.0"}; see `,
+        `Everything Murmur publishes, from ${first || "–"} to ${last || "–"}: free to download (CC BY 4.0; headlines, sentiment and prices: source terms apply). Dataset ${manifest.data_version ? `v${manifest.data_version}` : "v1.0.0"}; see `,
         link("/methodology#versions", "what stays stable"),
         ". How to read it: ",
         el("a", { href: "https://github.com/GabeBecker2048/murmur/blob/main/docs/quickstart.md" }, "quick start"),
@@ -237,7 +237,7 @@ export async function render(main, parts, query) {
 function licenseBadge(d) {
   if (d.public === false) return badge("private", "warning");
   const name = (d.license && d.license.name) || "open";
-  if (/^source terms/i.test(name)) return badge("source terms", "warning");
+  if (/^source terms/i.test(name)) return badge("source terms");
   return badge(name, "good");
 }
 
@@ -251,10 +251,10 @@ async function renderDataset(wrap, name) {
   }
   const lic = d.license || {};
   const tables = Object.entries(d.tables || {});
-  clear(wrap).append(
+  append(clear(wrap), [
     el("p", { class: "muted", text: d.description }),
-    d.public === false ? el("div", { class: "notice warn", text: "This dataset is not published yet: its source's terms do not allow redistribution. The files exist and are used by the analysis, but downloads answer 403." }) : null,
-    /^source terms/i.test(lic.name || "") ? el("div", { class: "notice warn", text: "This table carries no license from Murmur. It is republished for non-commercial research under the source's terms; see the notice in every file's metadata." }) : null,
+    d.public === false ? el("div", { class: "notice warn", text: "This dataset is not published: the files are used by the analysis, but downloads answer 403." }) : null,
+    /^source terms/i.test(lic.name || "") ? el("p", { class: "small muted", text: lic.note }) : null,
     el("p", { class: "small muted" }, "License: ", lic.url ? el("a", { href: lic.url, target: "_blank", rel: "noopener" }, lic.name) : lic.name || "–", lic.attribution ? ` · attribute "${lic.attribution}"` : "", lic.contact ? ` · contact: ${lic.contact}` : ""),
     el("div", { class: "stack" }, tables.map(([t, spec]) => el("div", {}, el("h3", {}, el("span", { class: "mono" }, t), el("span", { class: "faint small", text: ` · key: ${(spec.key || []).join(", ")}` })), el("p", { class: "small mono muted", style: "word-break:break-word", text: (spec.columns || []).join(", ") })))),
     table(
@@ -268,5 +268,5 @@ async function renderDataset(wrap, name) {
       (d.files || []).slice().reverse(),
       { compact: true, empty: "No files yet." },
     ),
-  );
+  ]);
 }

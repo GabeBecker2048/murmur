@@ -1,6 +1,14 @@
 """Rounding and notices applied to everything that leaves the building."""
 
-from murmur.publish import cc_by, file_metadata, public, round_cap, round_weight, source_terms
+from murmur.publish import (
+    cc_by,
+    file_metadata,
+    news_terms,
+    public,
+    round_cap,
+    round_weight,
+    source_terms,
+)
 
 
 def test_round_cap_three_significant_figures():
@@ -23,8 +31,12 @@ def test_round_weight_and_public_walks_nested_values():
 
 def test_notices_and_metadata():
     st = source_terms("me@example.com")
-    assert st["name"].startswith("Source terms") and "no rights" in st["note"]
-    assert st["contact"] == "me@example.com" and "yahoo" in st["url"]
+    assert st["name"] == "Source terms apply" and "Takedown available by request" in st["note"]
+    assert st["contact"] == "me@example.com" and "dataset-card" in st["url"]
+    assert "yfinance" in st["attribution"]
+    nt = news_terms("me@example.com")
+    assert nt["name"] == "Source terms apply" and "Finnhub" in nt["attribution"]
+    assert "Takedown available by request" in nt["note"]
     meta = file_metadata("prices", "prices", st, {"murmur_period": "2026-11-05"})
     assert meta["license"] == st["name"] and meta["murmur_period"] == "2026-11-05"
     assert all(isinstance(v, str) for v in meta.values())

@@ -340,6 +340,7 @@ def ui(config: Config = Depends(get_config)):
         "coverage": config.universe.size,
         "private_datasets": list(config.datasets.private),
         "writes_enabled": bool(config.api.token),
+        "contact": config.datasets.contact,
     }
 
 
